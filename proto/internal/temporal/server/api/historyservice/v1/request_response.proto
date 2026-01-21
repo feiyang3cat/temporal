@@ -99,6 +99,9 @@ message StartWorkflowExecutionRequest {
     // After the first workflow task, the effective behavior of the workflow is determined by worker-sent values in
     // subsequent workflow tasks.
     temporal.api.deployment.v1.InheritedAutoUpgradeInfo inherited_auto_upgrade_info = 16;
+
+
+    InternalWorkflowPermission internal_workflow_permission = 17;
 }
 
 message StartWorkflowExecutionResponse {
@@ -455,6 +458,8 @@ message SignalWorkflowExecutionRequest {
     temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest signal_request = 2;
     temporal.api.common.v1.WorkflowExecution external_workflow_execution = 3;
     bool child_workflow_only = 4;
+
+    InternalWorkflowPermission internal_workflow_permission = 5;
 }
 
 message SignalWorkflowExecutionResponse {
@@ -467,6 +472,7 @@ message SignalWithStartWorkflowExecutionRequest {
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "with" is needed here. --)
     temporal.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest signal_with_start_request = 2;
+
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -1370,3 +1376,10 @@ message UnpauseWorkflowExecutionRequest {
 }
 
 message UnpauseWorkflowExecutionResponse { }
+
+// certain internal workflows cannot be called by general public APIs, e.g. cron workflow.
+enum InternalWorkflowPermission {
+    INTERNAL_WORKFLOW_PERMISSION_UNSPECIFIED = 0;
+    INTERNAL_WORKFLOW_PERMISSION_RESTRICTED = 1;
+    INTERNAL_WORKFLOW_PERMISSION_ALLOWED = 2;
+}

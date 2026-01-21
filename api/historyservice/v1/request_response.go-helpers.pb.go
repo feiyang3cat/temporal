@@ -2,6 +2,8 @@
 package historyservice
 
 import (
+	"fmt"
+
 	"google.golang.org/protobuf/proto"
 )
 
@@ -5775,4 +5777,23 @@ func (this *UnpauseWorkflowExecutionResponse) Equal(that interface{}) bool {
 	}
 
 	return proto.Equal(this, that1)
+}
+
+var (
+	InternalWorkflowPermission_shorthandValue = map[string]int32{
+		"Unspecified": 0,
+		"Restricted":  1,
+		"Allowed":     2,
+	}
+)
+
+// InternalWorkflowPermissionFromString parses a InternalWorkflowPermission value from  either the protojson
+// canonical SCREAMING_CASE enum or the traditional temporal PascalCase enum to InternalWorkflowPermission
+func InternalWorkflowPermissionFromString(s string) (InternalWorkflowPermission, error) {
+	if v, ok := InternalWorkflowPermission_value[s]; ok {
+		return InternalWorkflowPermission(v), nil
+	} else if v, ok := InternalWorkflowPermission_shorthandValue[s]; ok {
+		return InternalWorkflowPermission(v), nil
+	}
+	return InternalWorkflowPermission(0), fmt.Errorf("%s is not a valid InternalWorkflowPermission", s)
 }
