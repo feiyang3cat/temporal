@@ -91,6 +91,11 @@ func (ts *TimeSkippingTimeSource) Since(t time.Time) time.Duration {
 // AfterFunc creates a timer that fires after duration d in adjusted time.
 // If skipped time causes the deadline to pass, the timer fires immediately.
 func (ts *TimeSkippingTimeSource) AfterFunc(d time.Duration, f func()) Timer {
+	return ts.afterFunc(d, f)
+}
+
+// afterFunc is the internal implementation returning *skippingTimer directly.
+func (ts *TimeSkippingTimeSource) afterFunc(d time.Duration, f func()) *skippingTimer {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 
@@ -134,11 +139,11 @@ func (ts *TimeSkippingTimeSource) AfterFunc(d time.Duration, f func()) Timer {
 // When the timer fires, it sends the adjusted current time on the channel.
 func (ts *TimeSkippingTimeSource) NewTimer(d time.Duration) (<-chan time.Time, Timer) {
 	ch := make(chan time.Time, 1)
-	timer := ts.AfterFunc(d, func() {
+	t := ts.afterFunc(d, func() {
 		ch <- ts.Now()
-	}).(*skippingTimer)
-	timer.c = ch
-	return ch, timer
+	})
+	t.c = ch
+	return ch, t
 }
 
 // AddSkippedTime adds a duration to the accumulated skipped time.

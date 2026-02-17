@@ -126,6 +126,17 @@ func (t *timerQueueActiveTaskExecutor) Execute(
 		err = queueserrors.NewUnprocessableTaskError("unknown task type")
 	}
 
+	// todo(feiyang): trigger-No.2 of time skipping, to be completed.
+	if err == errNoTimerFired {
+		task := executable.GetTask()
+		chasmKey := chasm.ExecutionKey{
+			NamespaceID: task.GetNamespaceID(),
+			BusinessID:  task.GetWorkflowID(),
+			RunID:       task.GetRunID(),
+		}
+		t.shardContext.NotifyTimeSkipper(chasmKey)
+	}
+
 	return queues.ExecuteResponse{
 		ExecutionMetricTags: metricsTags,
 		ExecutedAsActive:    true,
