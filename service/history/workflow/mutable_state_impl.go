@@ -359,7 +359,7 @@ func NewMutableState(
 		eventsCache:     eventsCache,
 		config:          shard.GetConfig(),
 		timeSource:      shard.GetTimeSource(),
-		timeSkipper:     timeskipper.NewTimeSkipper(),
+		timeSkipper:     nil, // todo(feiyang), init timeskipper for all new mutableState methods
 		logger:          logger,
 		metricsHandler:  shard.GetMetricsHandler().WithTags(metrics.OperationTag(metrics.WorkflowContextScope)),
 	}

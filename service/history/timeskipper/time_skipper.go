@@ -20,42 +20,56 @@ type (
 	TimeSkipper struct {
 		NamespaceID string
 		SkipperID   string
-		SkipperType TimeSkipperType
-		Enabled     bool
-		Unlocked    bool
+		Mutex       sync.Mutex
+		SkipperType TimeSkipperType // may be found unuseful?
 
 		SkippedDurations   []time.Duration
 		BaseTimeSource     clock.TimeSource
 		AdjustedTimeSource clock.TimeSource
 
-		ExecutionKey chasm.ExecutionKey
-		Mutex        sync.Mutex
+		// it this is an independent time skipper, this map will only have one entry
+		ExecutionKeysToUnlockStatus map[chasm.ExecutionKey]bool
 	}
 )
 
-// When this is an independent time skipper,
-// the execution key is used to find the shard of the time skipper
 func NewIndependentTimeSkipper(
 	executionKey chasm.ExecutionKey,
 	baseTimeSource clock.TimeSource,
+	skippedDurations []time.Duration,
 ) *TimeSkipper {
-	adjustedTimeSource := clock.NewTimeSkippingTimeSource(baseTimeSource)
-	return &TimeSkipper{
-		NamespaceID:        executionKey.NamespaceID,
-		ExecutionKey:       executionKey,
-		SkipperType:        TimeSkipperTypeIndependent,
-		Enabled:            false,
-		Unlocked:           false,
-		BaseTimeSource:     baseTimeSource,
-		AdjustedTimeSource: adjustedTimeSource,
-	}
+	keys := []chasm.ExecutionKey{executionKey}
+	return newTimeSkipper(TimeSkipperTypeIndependent, keys, baseTimeSource, skippedDurations)
 }
 
-func NewTimeSkipper() *TimeSkipper {
+func NewGroupTimeSkipper(
+	executionKeys []chasm.ExecutionKey,
+	baseTimeSource clock.TimeSource,
+	skippedDurations []time.Duration,
+) *TimeSkipper {
+	return newTimeSkipper(TimeSkipperTypeGroup, executionKeys, baseTimeSource, skippedDurations)
+}
+
+func newTimeSkipper(
+	skipperType TimeSkipperType,
+	executionKeys []chasm.ExecutionKey,
+	baseTimeSource clock.TimeSource,
+	skippedDurations []time.Duration,
+) *TimeSkipper {
+	adjustedTimeSource := clock.NewTimeSkippingTimeSource(baseTimeSource)
+	if skippedDurations == nil {
+		skippedDurations = make([]time.Duration, 0)
+	}
+	adjustedTimeSource.AddSkippedTimes(skippedDurations)
+	executionKeysToUnlockStatus := make(map[chasm.ExecutionKey]bool)
+	for _, executionKey := range executionKeys {
+		executionKeysToUnlockStatus[executionKey] = false
+	}
 	return &TimeSkipper{
-		Enabled:          false,
-		Unlocked:         false,
-		SkippedDurations: make([]time.Duration, 0),
+		ExecutionKeysToUnlockStatus: executionKeysToUnlockStatus,
+		BaseTimeSource:              baseTimeSource,
+		AdjustedTimeSource:          adjustedTimeSource,
+		SkippedDurations:            skippedDurations,
+		SkipperType:                 skipperType,
 	}
 }
 
@@ -63,9 +77,6 @@ func NewTimeSkipper() *TimeSkipper {
 // when time skipper should be triggered, this method will be called
 func (ts *TimeSkipper) PumpOnce() {
 	// simplified process just for demo
-	if !ts.Enabled {
-		return
-	}
 	ts.lockAllExecutions()
 	defer ts.unlockAllExecutions()
 
@@ -122,20 +133,26 @@ func (ts *TimeSkipper) updateMutableState(nextTimerTask tasks.Task) error {
 	// -update the pending timer tasks of all these executions
 	// persistence change:
 	// -update the change into persistence
+	// todo: key problems to solve
 	return errors.New("not implemented")
 }
 
 func (ts *TimeSkipper) isTimeSkipperUnlocked() bool {
-	return ts.Unlocked
+	for _, unlocked := range ts.ExecutionKeysToUnlockStatus {
+		if !unlocked {
+			return false
+		}
+	}
+	return true
 }
 
 // SetExecutionUnlocked sets the unlocked state for a specific execution
 func (ts *TimeSkipper) Unlock(key chasm.ExecutionKey) {
-	ts.Unlocked = true
+	ts.ExecutionKeysToUnlockStatus[key] = true
 }
 
 func (ts *TimeSkipper) Lock(key chasm.ExecutionKey) {
-	ts.Unlocked = false
+	ts.ExecutionKeysToUnlockStatus[key] = false
 }
 
 const (

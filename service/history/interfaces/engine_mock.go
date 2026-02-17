@@ -450,6 +450,18 @@ func (mr *MockEngineMockRecorder) NotifyNewTasks(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyNewTasks", reflect.TypeOf((*MockEngine)(nil).NotifyNewTasks), arg0)
 }
 
+// NotifyTimeSkipper mocks base method.
+func (m *MockEngine) NotifyTimeSkipper(executionKey chasm.ExecutionKey) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "NotifyTimeSkipper", executionKey)
+}
+
+// NotifyTimeSkipper indicates an expected call of NotifyTimeSkipper.
+func (mr *MockEngineMockRecorder) NotifyTimeSkipper(executionKey any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyTimeSkipper", reflect.TypeOf((*MockEngine)(nil).NotifyTimeSkipper), executionKey)
+}
+
 // PauseActivity mocks base method.
 func (m *MockEngine) PauseActivity(ctx context.Context, request *historyservice.PauseActivityRequest) (*historyservice.PauseActivityResponse, error) {
 	m.ctrl.T.Helper()

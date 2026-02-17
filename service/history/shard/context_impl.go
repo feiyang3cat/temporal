@@ -2231,6 +2231,10 @@ func (s *ContextImpl) ChasmRegistry() *chasm.Registry {
 	return s.chasmRegistry
 }
 
+func (s *ContextImpl) NotifyTimeSkipper(executionKey chasm.ExecutionKey) {
+	// TODO: implement shard-level time skipping notification
+}
+
 func (s *ContextImpl) GetCachedWorkflowContext(
 	ctx context.Context,
 	namespaceID namespace.ID,
