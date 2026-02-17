@@ -82,7 +82,7 @@ func TestNewTimeSkippingTimeSourceWithSkippedTime_IndependentSlice(t *testing.T)
 
 	// Modify the original slice
 	skippedTime[0] = 100 * time.Second
-	skippedTime = append(skippedTime, 50*time.Second)
+	_ = append(skippedTime, 50*time.Second)
 
 	// TimeSource should be unaffected
 	now := ts.Now()
@@ -389,12 +389,10 @@ func TestTimeSkippingTimeSource_TimerStop(t *testing.T) {
 	assert.True(t, stopped, "Should return true when stopping an active timer")
 
 	// Wait a bit to ensure it doesn't fire
-	time.Sleep(150 * time.Millisecond)
-
 	select {
 	case <-ch:
 		t.Fatal("Timer fired after being stopped")
-	default:
+	case <-time.After(150 * time.Millisecond):
 		// Success - timer did not fire
 	}
 }
@@ -408,7 +406,7 @@ func TestTimeSkippingTimeSource_TimerReset(t *testing.T) {
 	ch, timer := ts.NewTimer(200 * time.Millisecond)
 
 	// Reset to a shorter duration
-	time.Sleep(50 * time.Millisecond)
+	<-time.After(50 * time.Millisecond)
 	wasActive := timer.Reset(50 * time.Millisecond)
 	assert.True(t, wasActive, "Should return true when resetting an active timer")
 

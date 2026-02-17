@@ -106,6 +106,10 @@ type (
 		GetFinalizer() *finalizer.Finalizer
 
 		ChasmRegistry() *chasm.Registry
+
+		// todo(feiyang): this can be a method of only sending the signal,
+		// but the caller doesn't necessarily need to wait for the completion of the time skipping.
+		// and this method should always succeed
 		NotifyTimeSkipper(executionKey chasm.ExecutionKey)
 	}
 

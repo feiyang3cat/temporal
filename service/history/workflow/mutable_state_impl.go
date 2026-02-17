@@ -261,7 +261,7 @@ type (
 		eventsCache            events.Cache
 		config                 *configs.Config
 		timeSource             clock.TimeSource
-		timeSkipper            *timeskipper.TimeSkipper
+		timeSkippingInfos      *timeskipper.TimeSkipperPerExecutionInfos
 		logger                 log.Logger
 		metricsHandler         metrics.Handler
 		stateMachineNode       *hsm.Node
@@ -355,14 +355,14 @@ func NewMutableState(
 
 		QueryRegistry: NewQueryRegistry(),
 
-		shard:           shard,
-		clusterMetadata: shard.GetClusterMetadata(),
-		eventsCache:     eventsCache,
-		config:          shard.GetConfig(),
-		timeSource:      shard.GetTimeSource(),
-		timeSkipper:     nil, // todo(feiyang), init timeskipper for all new mutableState methods
-		logger:          logger,
-		metricsHandler:  shard.GetMetricsHandler().WithTags(metrics.OperationTag(metrics.WorkflowContextScope)),
+		shard:             shard,
+		clusterMetadata:   shard.GetClusterMetadata(),
+		eventsCache:       eventsCache,
+		config:            shard.GetConfig(),
+		timeSource:        shard.GetTimeSource(),
+		timeSkippingInfos: nil, // todo(feiyang), init timeskipper for all new mutableState methods
+		logger:            logger,
+		metricsHandler:    shard.GetMetricsHandler().WithTags(metrics.OperationTag(metrics.WorkflowContextScope)),
 	}
 
 	s.executionInfo = &persistencespb.WorkflowExecutionInfo{

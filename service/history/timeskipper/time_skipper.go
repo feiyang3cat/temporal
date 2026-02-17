@@ -11,46 +11,45 @@ import (
 )
 
 type (
+	TimeSkipperKey struct {
+		// option-1:
+		// one way is to use the first executionKey the time skipper manages as the main executionKey
+		// so that we can find the shardID from the main executionKey
+		// the runID is not used to calculate the shardID, so it can be any value
+		MainExecutionKey chasm.ExecutionKey
 
-	// TimeSkipperType defines the type of time skipping behavior
-	TimeSkipperType int32
-
-	// TimeSkipper holds information about time skipping for a workflow execution.
-	// This allows workflows to skip forward in time while maintaining correct timer behavior.
-	TimeSkipper struct {
+		// option-2:
+		// this skipperID is a unique identifier for the time skipper, but right now
+		// the shardID it belongs to is not calculated from this skipperID,
+		// but from the executionKeys it manages
 		NamespaceID string
-		SkipperID   string
-		Mutex       sync.Mutex
-		SkipperType TimeSkipperType // may be found unuseful?
+		ShardID     int32  // this shardID is used to find the shard context
+		SkipperID   string // we can use the first executionKey's runID as the skipperID
+	}
+
+	TimeSkipperPerExecutionInfos struct {
+		Key              TimeSkipperKey
+		UnlockStatus     bool
+		SkippedDurations []time.Duration // the timeskipping timesource can be uniquely built from the skipped durations
+	}
+
+	// TimeSkipper is managed by the shard, can be in cache/memory,
+	// and should be stored in the persistence layer.
+	TimeSkipper struct {
+		Key  TimeSkipperKey
+		lock sync.Mutex
 
 		SkippedDurations   []time.Duration
-		BaseTimeSource     clock.TimeSource
+		BaseTimeSource     clock.TimeSource // should be the shard context's time source
 		AdjustedTimeSource clock.TimeSource
 
 		// it this is an independent time skipper, this map will only have one entry
+		// compatible with the old workflowKey
 		ExecutionKeysToUnlockStatus map[chasm.ExecutionKey]bool
 	}
 )
 
-func NewIndependentTimeSkipper(
-	executionKey chasm.ExecutionKey,
-	baseTimeSource clock.TimeSource,
-	skippedDurations []time.Duration,
-) *TimeSkipper {
-	keys := []chasm.ExecutionKey{executionKey}
-	return newTimeSkipper(TimeSkipperTypeIndependent, keys, baseTimeSource, skippedDurations)
-}
-
-func NewGroupTimeSkipper(
-	executionKeys []chasm.ExecutionKey,
-	baseTimeSource clock.TimeSource,
-	skippedDurations []time.Duration,
-) *TimeSkipper {
-	return newTimeSkipper(TimeSkipperTypeGroup, executionKeys, baseTimeSource, skippedDurations)
-}
-
-func newTimeSkipper(
-	skipperType TimeSkipperType,
+func NewTimeSkipper(
 	executionKeys []chasm.ExecutionKey,
 	baseTimeSource clock.TimeSource,
 	skippedDurations []time.Duration,
@@ -69,7 +68,6 @@ func newTimeSkipper(
 		BaseTimeSource:              baseTimeSource,
 		AdjustedTimeSource:          adjustedTimeSource,
 		SkippedDurations:            skippedDurations,
-		SkipperType:                 skipperType,
 	}
 }
 
@@ -77,8 +75,10 @@ func newTimeSkipper(
 // when time skipper should be triggered, this method will be called
 func (ts *TimeSkipper) PumpOnce() {
 	// simplified process just for demo
-	ts.lockAllExecutions()
-	defer ts.unlockAllExecutions()
+	if err := ts.lockAllExecutions(); err != nil {
+		return
+	}
+	defer func() { _ = ts.unlockAllExecutions() }()
 
 	if !ts.isAutoSkippable() {
 		return
@@ -90,8 +90,12 @@ func (ts *TimeSkipper) PumpOnce() {
 	if err != nil {
 		return
 	}
-	ts.addTimeSkippedEvents(nextTimerTask)
-	ts.updateMutableState(nextTimerTask)
+	if err := ts.addTimeSkippedEvents(nextTimerTask); err != nil {
+		return
+	}
+	if err := ts.updateMutableState(nextTimerTask); err != nil {
+		return
+	}
 }
 
 // KEY-STEP-0: acquire per-execution lock
@@ -146,31 +150,11 @@ func (ts *TimeSkipper) isTimeSkipperUnlocked() bool {
 	return true
 }
 
-// SetExecutionUnlocked sets the unlocked state for a specific execution
+// Unlock sets the unlocked state for a specific execution.
 func (ts *TimeSkipper) Unlock(key chasm.ExecutionKey) {
 	ts.ExecutionKeysToUnlockStatus[key] = true
 }
 
 func (ts *TimeSkipper) Lock(key chasm.ExecutionKey) {
 	ts.ExecutionKeysToUnlockStatus[key] = false
-}
-
-const (
-	// TimeSkipperTypeIndependent means this workflow skips time independently
-	TimeSkipperTypeIndependent TimeSkipperType = iota
-
-	// TimeSkipperTypeGroup means this workflow is part of a group that skips time together
-	TimeSkipperTypeGroup
-)
-
-// String returns a string representation of TimeSkipperType
-func (t TimeSkipperType) String() string {
-	switch t {
-	case TimeSkipperTypeIndependent:
-		return "Independent"
-	case TimeSkipperTypeGroup:
-		return "Group"
-	default:
-		return "Unknown"
-	}
 }
