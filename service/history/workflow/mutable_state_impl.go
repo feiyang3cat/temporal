@@ -69,6 +69,7 @@ import (
 	"go.temporal.io/server/service/history/hsm"
 	historyi "go.temporal.io/server/service/history/interfaces"
 	"go.temporal.io/server/service/history/tasks"
+	"go.temporal.io/server/service/history/timeskipper"
 	"go.temporal.io/server/service/history/workflow/update"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -259,6 +260,7 @@ type (
 		eventsCache            events.Cache
 		config                 *configs.Config
 		timeSource             clock.TimeSource
+		timeSkipper            *timeskipper.TimeSkipper
 		logger                 log.Logger
 		metricsHandler         metrics.Handler
 		stateMachineNode       *hsm.Node
@@ -357,6 +359,7 @@ func NewMutableState(
 		eventsCache:     eventsCache,
 		config:          shard.GetConfig(),
 		timeSource:      shard.GetTimeSource(),
+		timeSkipper:     timeskipper.NewTimeSkipper(),
 		logger:          logger,
 		metricsHandler:  shard.GetMetricsHandler().WithTags(metrics.OperationTag(metrics.WorkflowContextScope)),
 	}
