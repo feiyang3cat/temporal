@@ -105,8 +105,8 @@ type (
 		// TODO(bergundy): This Environment should be host level once shard level workflow cache is deprecated.
 		StateMachineEnvironment(operationTag metrics.Tag) hsm.Environment
 
-		// todo, tentative: whenever
-		NotifyTimeSkipping(executionKey chasm.ExecutionKey)
+		// todo(feiyang): probably a good place to trigger time skipping
+		NotifyTimeSkipper(executionKey chasm.ExecutionKey)
 
 		ReplicationStream
 		Start()

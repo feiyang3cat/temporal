@@ -669,6 +669,18 @@ func (mr *MockShardContextMockRecorder) NewVectorClock() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewVectorClock", reflect.TypeOf((*MockShardContext)(nil).NewVectorClock))
 }
 
+// NotifyTimeSkipper mocks base method.
+func (m *MockShardContext) NotifyTimeSkipper(executionKey chasm.ExecutionKey) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "NotifyTimeSkipper", executionKey)
+}
+
+// NotifyTimeSkipper indicates an expected call of NotifyTimeSkipper.
+func (mr *MockShardContextMockRecorder) NotifyTimeSkipper(executionKey any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyTimeSkipper", reflect.TypeOf((*MockShardContext)(nil).NotifyTimeSkipper), executionKey)
+}
+
 // SetCurrentTime mocks base method.
 func (m *MockShardContext) SetCurrentTime(arg0 string, currentTime time.Time) {
 	m.ctrl.T.Helper()
@@ -1484,6 +1496,18 @@ func (m *MockControllableContext) NewVectorClock() (*clock.VectorClock, error) {
 func (mr *MockControllableContextMockRecorder) NewVectorClock() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewVectorClock", reflect.TypeOf((*MockControllableContext)(nil).NewVectorClock))
+}
+
+// NotifyTimeSkipper mocks base method.
+func (m *MockControllableContext) NotifyTimeSkipper(executionKey chasm.ExecutionKey) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "NotifyTimeSkipper", executionKey)
+}
+
+// NotifyTimeSkipper indicates an expected call of NotifyTimeSkipper.
+func (mr *MockControllableContextMockRecorder) NotifyTimeSkipper(executionKey any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NotifyTimeSkipper", reflect.TypeOf((*MockControllableContext)(nil).NotifyTimeSkipper), executionKey)
 }
 
 // SetCurrentTime mocks base method.

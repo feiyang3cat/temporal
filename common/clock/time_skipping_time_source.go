@@ -20,14 +20,14 @@ type (
 
 	// skippingTimer tracks a timer that is aware of time skips
 	skippingTimer struct {
-		id            int64
-		baseTimer     Timer
-		deadline      time.Time // in adjusted time
-		callback      func()
-		source        *TimeSkippingTimeSource
-		fired         bool
-		c             chan time.Time // for NewTimer, buffered channel
-		mu            sync.Mutex
+		id        int64
+		baseTimer Timer
+		deadline  time.Time // in adjusted time
+		callback  func()
+		source    *TimeSkippingTimeSource
+		fired     bool
+		c         chan time.Time // for NewTimer, buffered channel
+		mu        sync.Mutex
 	}
 )
 
@@ -150,6 +150,14 @@ func (ts *TimeSkippingTimeSource) AddSkippedTime(d time.Duration) {
 	// Fire callbacks outside the lock to avoid deadlocks
 	for _, timer := range timersToFire {
 		timer.callback()
+	}
+}
+
+func (ts *TimeSkippingTimeSource) AddSkippedTimes(durations []time.Duration) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	for _, duration := range durations {
+		ts.AddSkippedTime(duration)
 	}
 }
 

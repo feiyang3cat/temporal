@@ -1123,3 +1123,7 @@ func (e *historyEngineImpl) UnpauseWorkflowExecution(
 ) (resp *historyservice.UnpauseWorkflowExecutionResponse, retError error) {
 	return unpauseworkflow.Invoke(ctx, req, e.shardContext, e.workflowConsistencyChecker)
 }
+
+func (e *historyEngineImpl) NotifyTimeSkipper(executionKey chasm.ExecutionKey) {
+	e.shardContext.NotifyTimeSkipper(executionKey)
+}

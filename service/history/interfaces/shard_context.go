@@ -106,6 +106,7 @@ type (
 		GetFinalizer() *finalizer.Finalizer
 
 		ChasmRegistry() *chasm.Registry
+		NotifyTimeSkipper(executionKey chasm.ExecutionKey)
 	}
 
 	// A ControllableContext is a Context plus other methods needed by
