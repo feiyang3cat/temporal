@@ -10,6 +10,7 @@ import (
 
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
+	"go.temporal.io/server/common/metrics"
 )
 
 var _ Client = (*fileBasedClient)(nil)
@@ -40,6 +41,7 @@ type (
 		lastUpdatedTime time.Time
 		config          *FileBasedClientConfig
 		doneCh          <-chan interface{}
+		handler         metrics.Handler
 
 		NotifyingClientImpl
 	}
@@ -50,20 +52,21 @@ type (
 )
 
 // NewFileBasedClient creates a file based client.
-func NewFileBasedClient(config *FileBasedClientConfig, logger log.Logger, doneCh <-chan interface{}) (*fileBasedClient, error) {
+func NewFileBasedClient(config *FileBasedClientConfig, logger log.Logger, doneCh <-chan interface{}, metricsHandler metrics.Handler) (*fileBasedClient, error) {
 	if config == nil {
 		return nil, errors.New("configuration for dynamic config client is nil")
 	}
 	reader := &osReader{path: config.Filepath}
-	return NewFileBasedClientWithReader(reader, config, logger, doneCh)
+	return NewFileBasedClientWithReader(reader, config, logger, doneCh, metricsHandler)
 }
 
-func NewFileBasedClientWithReader(reader FileReader, config *FileBasedClientConfig, logger log.Logger, doneCh <-chan interface{}) (*fileBasedClient, error) {
+func NewFileBasedClientWithReader(reader FileReader, config *FileBasedClientConfig, logger log.Logger, doneCh <-chan interface{}, metricsHandler metrics.Handler) (*fileBasedClient, error) {
 	client := &fileBasedClient{
 		logger:              logger,
 		reader:              reader,
 		config:              config,
 		doneCh:              doneCh,
+		handler:             metricsHandler,
 		NotifyingClientImpl: NewNotifyingClientImpl(),
 	}
 
@@ -124,7 +127,7 @@ func (fc *fileBasedClient) Update() (updateErr error) {
 	defer func() {
 		if updateErr != nil {
 			fc.lastUpdatedTime = prevModtime
-			// add metric
+			metrics.DynamicConfigUpdateFailureCounter.With(fc.handler).Record(1)
 		}
 	}()
 
