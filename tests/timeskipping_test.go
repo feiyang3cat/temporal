@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	commandpb "go.temporal.io/api/command/v1"
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
@@ -196,6 +197,7 @@ func (s *TimeSkippingTestSuite) TestTimeSkipping_UpdateWorkflowOptions_DCEnabled
 		WorkflowId:          tv.WorkflowID(),
 		WorkflowType:        tv.WorkflowType(),
 		TaskQueue:           tv.TaskQueue(),
+<<<<<<< HEAD
 		WorkflowRunTimeout:  durationpb.New(100 * time.Second),
 		WorkflowTaskTimeout: durationpb.New(10 * time.Second),
 	})
