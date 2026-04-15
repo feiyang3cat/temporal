@@ -353,6 +353,100 @@ func (s *TimeSkippingTestSuite) TestTimeSkipping_ResetWithUpdateOptions() {
 		if e.EventType == enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED {
 			optionsUpdatedEvent = e
 			break
+
+	// Verify history.
+	history := env.GetHistory(env.Namespace().String(), &commonpb.WorkflowExecution{WorkflowId: tv.WorkflowID(), RunId: runID})
+	s.True(hasEventType(history, enumspb.EVENT_TYPE_TIMER_FIRED), "timer must have fired via time-skipping")
+	s.True(hasEventType(history, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED),
+		"time-skipping transitioned event expected")
+	s.True(hasEventType(history, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED), "workflow must complete")
+}
+
+// TestTimeSkipping_ActivityTimerActivityTimer exercises two full time-skipping cycles:
+//
+//	activity → timer → activity → timer → complete
+//
+// Each timer is set to 1 hour; time-skipping moves both to fire immediately so the
+// workflow completes in seconds rather than hours.
+//
+// Sequence:
+//
+//	WT1  → schedule activity 1
+//	AT1  → complete activity 1
+//	WT2  → start 1-hour timer 1  (time-skipping fires on close)
+//	WT3  → schedule activity 2  (timer 1 has fired)
+//	AT2  → complete activity 2
+//	WT4  → start 1-hour timer 2  (time-skipping fires on close)
+//	WT5  → complete workflow      (timer 2 has fired)
+func (s *TimeSkippingTestSuite) TestTimeSkipping_ActivityTimerActivityTimer() {
+	env := testcore.NewEnv(s.T())
+	env.OverrideDynamicConfig(dynamicconfig.TimeSkippingEnabled, true)
+	tv := testvars.New(s.T())
+
+	runID := s.startTimeSkippingWorkflow(env, tv)
+	poller := taskpoller.New(s.T(), env.FrontendClient(), env.Namespace().String())
+
+	// WT 1: schedule first activity.
+	_, err := poller.PollAndHandleWorkflowTask(tv, func(_ *workflowservice.PollWorkflowTaskQueueResponse) (*workflowservice.RespondWorkflowTaskCompletedRequest, error) {
+		return &workflowservice.RespondWorkflowTaskCompletedRequest{
+			Commands: []*commandpb.Command{scheduleActivityCmd(tv.WithActivityIDNumber(1))},
+		}, nil
+	})
+	s.NoError(err)
+
+	// AT 1: complete first activity.
+	_, err = poller.PollAndHandleActivityTask(tv.WithActivityIDNumber(1), taskpoller.CompleteActivityTask(tv))
+	s.NoError(err)
+
+	// WT 2: start a 1-hour timer.  No pending activity → time-skipping fires on closeTransaction.
+	_, err = poller.PollAndHandleWorkflowTask(tv, func(_ *workflowservice.PollWorkflowTaskQueueResponse) (*workflowservice.RespondWorkflowTaskCompletedRequest, error) {
+		return &workflowservice.RespondWorkflowTaskCompletedRequest{
+			Commands: []*commandpb.Command{startTimerCmd("timer-1", time.Hour)},
+		}, nil
+	})
+	s.NoError(err)
+
+	// WT 3: timer 1 has fired; schedule second activity.
+	_, err = poller.PollAndHandleWorkflowTask(tv, func(_ *workflowservice.PollWorkflowTaskQueueResponse) (*workflowservice.RespondWorkflowTaskCompletedRequest, error) {
+		return &workflowservice.RespondWorkflowTaskCompletedRequest{
+			Commands: []*commandpb.Command{scheduleActivityCmd(tv.WithActivityIDNumber(2))},
+		}, nil
+	})
+	s.NoError(err)
+
+	// AT 2: complete second activity.
+	_, err = poller.PollAndHandleActivityTask(tv.WithActivityIDNumber(2), taskpoller.CompleteActivityTask(tv))
+	s.NoError(err)
+
+	// WT 4: start a second 1-hour timer.  No pending activity → time-skipping fires on closeTransaction.
+	_, err = poller.PollAndHandleWorkflowTask(tv, func(_ *workflowservice.PollWorkflowTaskQueueResponse) (*workflowservice.RespondWorkflowTaskCompletedRequest, error) {
+		return &workflowservice.RespondWorkflowTaskCompletedRequest{
+			Commands: []*commandpb.Command{startTimerCmd("timer-2", time.Hour)},
+		}, nil
+	})
+	s.NoError(err)
+
+	// WT 5: timer 2 has fired; complete the workflow.
+	_, err = poller.PollAndHandleWorkflowTask(tv, func(_ *workflowservice.PollWorkflowTaskQueueResponse) (*workflowservice.RespondWorkflowTaskCompletedRequest, error) {
+		return &workflowservice.RespondWorkflowTaskCompletedRequest{
+			Commands: []*commandpb.Command{completeWorkflowCmd()},
+		}, nil
+	})
+	s.NoError(err)
+
+	// Verify history: two timer-fired events and two time-skipping events.
+	history := env.GetHistory(env.Namespace().String(), &commonpb.WorkflowExecution{WorkflowId: tv.WorkflowID(), RunId: runID})
+
+	var timerFiredCount, timeSkippingCount int
+	for _, e := range history {
+		switch e.GetEventType() {
+		case enumspb.EVENT_TYPE_TIMER_FIRED:
+			timerFiredCount++
+		case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED:
+			timeSkippingCount++
+		default:
+			// other event types are not relevant to this test
+>>>>>>> 2cac07985 (fix golangci lint)
 		}
 	}
 	s.NotNil(optionsUpdatedEvent, "expected WorkflowExecutionOptionsUpdated event in new run history")
