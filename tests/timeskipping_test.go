@@ -197,7 +197,6 @@ func (s *TimeSkippingTestSuite) TestTimeSkipping_UpdateWorkflowOptions_DCEnabled
 		WorkflowId:          tv.WorkflowID(),
 		WorkflowType:        tv.WorkflowType(),
 		TaskQueue:           tv.TaskQueue(),
-<<<<<<< HEAD
 		WorkflowRunTimeout:  durationpb.New(100 * time.Second),
 		WorkflowTaskTimeout: durationpb.New(10 * time.Second),
 	})
@@ -446,7 +445,6 @@ func (s *TimeSkippingTestSuite) TestTimeSkipping_ActivityTimerActivityTimer() {
 			timeSkippingCount++
 		default:
 			// other event types are not relevant to this test
->>>>>>> 2cac07985 (fix golangci lint)
 		}
 	}
 	s.NotNil(optionsUpdatedEvent, "expected WorkflowExecutionOptionsUpdated event in new run history")
