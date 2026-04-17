@@ -515,6 +515,11 @@ func NewMutableStateFromDB(
 		mutableState.executionState.StartTime = dbRecord.ExecutionInfo.StartTime
 	}
 
+	if dbRecord.ExecutionInfo.TimeSkippingInfo != nil {
+		mutableState.timeSource = clock.WrapTimeSourceWithTimeSkippingInfo(
+			mutableState.timeSource, dbRecord.ExecutionInfo.TimeSkippingInfo)
+	}
+
 	mutableState.hBuilder = historybuilder.New(
 		mutableState.timeSource,
 		mutableState.shard.GenerateTaskIDs,
@@ -560,6 +565,7 @@ func NewMutableStateFromDB(
 		mutableState.chasmNodeSizes[key] = nodeSize
 	}
 
+	// TODO@time-skipping: may need to change the time source to time skipping time source for chasm tree
 	if shard.GetConfig().EnableChasm(namespaceEntry.Name().String()) {
 		var err error
 		mutableState.chasmTree, err = chasm.NewTreeFromDB(
