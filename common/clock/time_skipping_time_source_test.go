@@ -10,12 +10,16 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+func newTestTimeSkippingWrapper(base clock.TimeSource) *clock.TimeSkippingTimeSourceWrapper {
+	return clock.WrapTimeSourceWithTimeSkippingInfo(base, nil).(*clock.TimeSkippingTimeSourceWrapper)
+}
+
 func TestTimeSkippingTimeSource_Now_NoSkipping(t *testing.T) {
 	t.Parallel()
 
 	base := clock.NewEventTimeSource()
 	base.Update(time.Unix(100, 0))
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := clock.WrapTimeSourceWithTimeSkippingInfo(base, nil)
 
 	require.Equal(t, time.Unix(100, 0), ts.Now())
 }
@@ -25,7 +29,7 @@ func TestTimeSkippingTimeSource_Now_NilInfo(t *testing.T) {
 
 	base := clock.NewEventTimeSource()
 	base.Update(time.Unix(100, 0))
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := newTestTimeSkippingWrapper(base)
 
 	ts.SetTimeSkippingInfo(nil)
 
@@ -37,7 +41,7 @@ func TestTimeSkippingTimeSource_Now_WithNoDuration(t *testing.T) {
 
 	base := clock.NewEventTimeSource()
 	base.Update(time.Unix(100, 0))
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := newTestTimeSkippingWrapper(base)
 
 	ts.SetTimeSkippingInfo(&persistencespb.TimeSkippingInfo{})
 
@@ -49,7 +53,7 @@ func TestTimeSkippingTimeSource_Now_WithSkipping(t *testing.T) {
 
 	base := clock.NewEventTimeSource()
 	base.Update(time.Unix(100, 0))
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := newTestTimeSkippingWrapper(base)
 
 	ts.SetTimeSkippingInfo(&persistencespb.TimeSkippingInfo{
 		AccumulatedSkippedDuration: durationpb.New(10 * time.Second),
@@ -63,7 +67,7 @@ func TestTimeSkippingTimeSource_Now_BaseAdvancesWithSkipping(t *testing.T) {
 
 	base := clock.NewEventTimeSource()
 	base.Update(time.Unix(100, 0))
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := newTestTimeSkippingWrapper(base)
 
 	ts.SetTimeSkippingInfo(&persistencespb.TimeSkippingInfo{
 		AccumulatedSkippedDuration: durationpb.New(5 * time.Second),
@@ -78,7 +82,7 @@ func TestTimeSkippingTimeSource_Since_DelegatesToBase(t *testing.T) {
 
 	base := clock.NewEventTimeSource()
 	base.Update(time.Unix(100, 0))
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := newTestTimeSkippingWrapper(base)
 
 	// Skipping offset does not affect Since — it delegates to the base.
 	ts.SetTimeSkippingInfo(&persistencespb.TimeSkippingInfo{
@@ -93,7 +97,7 @@ func TestTimeSkippingTimeSource_AfterFunc_DelegatesToBase(t *testing.T) {
 	t.Parallel()
 
 	base := clock.NewEventTimeSource()
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := clock.WrapTimeSourceWithTimeSkippingInfo(base, nil)
 
 	fired := false
 	ts.AfterFunc(time.Second, func() { fired = true })
@@ -107,7 +111,7 @@ func TestTimeSkippingTimeSource_NewTimer_DelegatesToBase(t *testing.T) {
 	t.Parallel()
 
 	base := clock.NewEventTimeSource()
-	ts := clock.NewTimeSkippingTimeSource(base)
+	ts := clock.WrapTimeSourceWithTimeSkippingInfo(base, nil)
 
 	ch, _ := ts.NewTimer(time.Second)
 
