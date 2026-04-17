@@ -411,13 +411,14 @@ func NewMutableState(
 	)
 	s.taskGenerator = taskGeneratorProvider.NewTaskGenerator(shard, s)
 	s.workflowTaskManager = newWorkflowTaskStateMachine(s, s.metricsHandler)
+	s.wrapTimeSourceWithTimeSkipping()
 
 	s.mustInitHSM()
 
 	if s.config.EnableChasm(namespaceName) {
 		s.chasmTree = chasm.NewEmptyTree(
 			shard.ChasmRegistry(),
-			shard.GetTimeSource(),
+			s.timeSource,
 			s,
 			chasm.DefaultPathEncoder,
 			logger,
@@ -515,11 +516,6 @@ func NewMutableStateFromDB(
 		mutableState.executionState.StartTime = dbRecord.ExecutionInfo.StartTime
 	}
 
-	if dbRecord.ExecutionInfo.TimeSkippingInfo != nil {
-		mutableState.timeSource = clock.WrapTimeSourceWithTimeSkippingInfo(
-			mutableState.timeSource, dbRecord.ExecutionInfo.TimeSkippingInfo)
-	}
-
 	mutableState.hBuilder = historybuilder.New(
 		mutableState.timeSource,
 		mutableState.shard.GenerateTaskIDs,
@@ -528,7 +524,6 @@ func NewMutableStateFromDB(
 		dbRecord.BufferedEvents,
 		mutableState.metricsHandler,
 	)
-
 	mutableState.currentVersion = common.EmptyVersion
 	mutableState.bufferEventsInDB = dbRecord.BufferedEvents
 	mutableState.stateInDB = dbRecord.ExecutionState.State
@@ -581,7 +576,7 @@ func NewMutableStateFromDB(
 			return nil, err
 		}
 	}
-
+	mutableState.wrapTimeSourceWithTimeSkipping()
 	return mutableState, nil
 }
 
@@ -2790,9 +2785,8 @@ func (ms *MutableStateImpl) AddWorkflowExecutionStartedEventWithOptions(
 	}
 
 	if tsc := startRequest.GetStartRequest().GetTimeSkippingConfig(); tsc != nil && tsc.GetEnabled() {
-		ms.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
-			Config: tsc,
-		}
+		ms.initTimeSkippingInfoAndWrapTimeSource()
+		ms.executionInfo.TimeSkippingInfo.Config = tsc
 	}
 
 	return event, nil
@@ -9536,4 +9530,30 @@ func logError(
 	tags = append(tags, tag.WorkflowRunID(executionState.RunId))
 	tags = append(tags, tag.WorkflowNamespaceID(executionInfo.NamespaceId))
 	logger.Error(msg, tags...)
+}
+
+// wrapTimeSourceWithTimeSkippingInfo sets up or updates the time-skipping wrapper on ms.timeSource
+// and propagates the new timeSource to all holders that keep their own copy.
+// Call this whenever executionInfo.TimeSkippingInfo is first initialised or replaced.
+func (ms *MutableStateImpl) wrapTimeSourceWithTimeSkipping() {
+	// no time skipping info, no need to wrap
+	if ms.executionInfo.TimeSkippingInfo == nil {
+		return
+	}
+	// idempotency check
+	if _, ok := ms.timeSource.(*clock.TimeSkippingTimeSourceWrapper); ok {
+		return
+	}
+	// taskGenerator and workflowTaskStateMachine read timeSource via ms directly and don't need updating.
+	ms.timeSource = clock.WrapTimeSourceWithTimeSkippingInfo(ms.timeSource, ms.executionInfo.TimeSkippingInfo)
+	ms.hBuilder.SetTimeSource(ms.timeSource)
+}
+
+// initTimeSkippingInfoAndWrapTimeSource initializes the time-skipping info and wraps the time source.
+// should always use this method to initialize the TimeSkippingInfo
+func (ms *MutableStateImpl) initTimeSkippingInfoAndWrapTimeSource() {
+	if ms.executionInfo.TimeSkippingInfo == nil {
+		ms.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{}
+	}
+	ms.wrapTimeSourceWithTimeSkipping()
 }
