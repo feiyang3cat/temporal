@@ -410,14 +410,14 @@ func NewMutableState(
 	)
 	s.taskGenerator = taskGeneratorProvider.NewTaskGenerator(shard, s)
 	s.workflowTaskManager = newWorkflowTaskStateMachine(s, s.metricsHandler)
-	s.wrapTimeSourceWithTimeSkipping()
 
 	s.mustInitHSM()
 
+	// TODO@time-skipping: support time skipping for chasm
 	if s.config.EnableChasm(namespaceName) {
 		s.chasmTree = chasm.NewEmptyTree(
 			shard.ChasmRegistry(),
-			s.timeSource,
+			shard.GetTimeSource(),
 			s,
 			chasm.DefaultPathEncoder,
 			logger,
@@ -425,6 +425,7 @@ func NewMutableState(
 		)
 	}
 
+	s.wrapTimeSourceWithTimeSkipping()
 	return s
 }
 
@@ -559,7 +560,7 @@ func NewMutableStateFromDB(
 		mutableState.chasmNodeSizes[key] = nodeSize
 	}
 
-	// TODO@time-skipping: may need to change the time source to time skipping time source for chasm tree
+	// TODO@time-skipping: support time skipping for chasm
 	if shard.GetConfig().EnableChasm(namespaceEntry.Name().String()) {
 		var err error
 		mutableState.chasmTree, err = chasm.NewTreeFromDB(
@@ -1794,6 +1795,10 @@ func (ms *MutableStateImpl) GetCompletionEvent(
 	}
 
 	return event, nil
+}
+
+func (ms *MutableStateImpl) GetVirtualTimeNow() time.Time {
+	return ms.timeSource.Now()
 }
 
 // GetWorkflowCloseTime returns workflow closed time, returns a zero time for open workflow
@@ -7326,7 +7331,7 @@ func (ms *MutableStateImpl) closeTransaction(
 	}
 
 	ms.executionInfo.StateTransitionCount += 1
-	ms.executionInfo.LastUpdateTime = timestamppb.New(ms.shard.GetTimeSource().Now())
+	ms.executionInfo.LastUpdateTime = timestamppb.New(ms.timeSource.Now())
 
 	// We generate checksum here based on the assumption that the returned
 	// snapshot object is considered immutable. As of this writing, the only

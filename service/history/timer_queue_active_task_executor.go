@@ -157,7 +157,7 @@ func (t *timerQueueActiveTaskExecutor) executeUserTimerTimeoutTask(
 	}
 
 	timerSequence := t.getTimerSequence(mutableState)
-	referenceTime := t.Now()
+	referenceTime := mutableState.GetVirtualTimeNow()
 	timerFired := false
 Loop:
 	for _, timerSequenceID := range timerSequence.LoadAndSortUserTimers() {
@@ -221,7 +221,7 @@ func (t *timerQueueActiveTaskExecutor) executeActivityTimeoutTask(
 	}
 
 	timerSequence := t.getTimerSequence(mutableState)
-	referenceTime := t.Now()
+	referenceTime := mutableState.GetVirtualTimeNow()
 	updateMutableState := false
 	scheduleWorkflowTask := false
 
