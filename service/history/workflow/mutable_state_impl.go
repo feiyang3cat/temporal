@@ -4033,19 +4033,11 @@ func (ms *MutableStateImpl) AddWorkflowExecutionTimeSkippingTransitionedEvent(ct
 		return nil, serviceerror.NewInternal("time skipping is triggered when conditions are not met")
 	}
 
-	if nextTimePointToSkip == nil {
-		event := ms.hBuilder.AddWorkflowExecutionTimeSkippingTransitionedEvent(
-			nil,
-			disabledAfterBound,
-		)
-		return event, ms.ApplyWorkflowExecutionTimeSkippingTransitionedEvent(ctx, event)
+	var targetTime time.Time
+	if nextTimePointToSkip != nil {
+		targetTime = nextTimePointToSkip.ExpiryTime.AsTime()
 	}
-
-	targetTime := nextTimePointToSkip.ExpiryTime.AsTime()
-	event := ms.hBuilder.AddWorkflowExecutionTimeSkippingTransitionedEvent(
-		&targetTime,
-		disabledAfterBound,
-	)
+	event := ms.hBuilder.AddWorkflowExecutionTimeSkippingTransitionedEvent(targetTime, disabledAfterBound)
 	return event, ms.ApplyWorkflowExecutionTimeSkippingTransitionedEvent(ctx, event)
 }
 
@@ -7270,7 +7262,7 @@ func (ms *MutableStateImpl) closeTransaction(
 		return closeTransactionResult{}, err
 	}
 
-	regenTimerTasksForTimeSkipping := ms.closeTransactionHandlerTimeSkipping(ctx, transactionPolicy)
+	regenTimerTasksForTimeSkipping := ms.closeTransactionHandleTimeSkipping(ctx, transactionPolicy)
 
 	// Save if the state is dirty before closeTransactionPrepareEvents since it flushes the buffer
 	// events, and therefore change the dirty state.
@@ -8472,7 +8464,7 @@ func (ms *MutableStateImpl) closeTransactionHandleActivityUserTimerTasks(
 	}
 }
 
-func (ms *MutableStateImpl) closeTransactionHandlerTimeSkipping(
+func (ms *MutableStateImpl) closeTransactionHandleTimeSkipping(
 	ctx context.Context,
 	transactionPolicy historyi.TransactionPolicy,
 ) (regenTimerTasksForTimeSkipping bool) {
@@ -8499,7 +8491,7 @@ func (ms *MutableStateImpl) closeTransactionHandlerTimeSkipping(
 	case historyi.TransactionPolicyPassive:
 		return false
 	default:
-		ms.logger.Error(fmt.Sprintf("closeTransactionHandlerTimeSkipping: unknown transaction policy: %v", transactionPolicy),
+		ms.logger.Error(fmt.Sprintf("closeTransactionHandleTimeSkipping: unknown transaction policy: %v", transactionPolicy),
 			tag.WorkflowID(ms.GetExecutionInfo().WorkflowId),
 			tag.WorkflowRunID(ms.GetExecutionState().RunId),
 		)
