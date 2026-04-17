@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/uber-go/tally/v4"
+	"go.temporal.io/server/common/clock"
 	commandpb "go.temporal.io/api/command/v1"
 	commonpb "go.temporal.io/api/common/v1"
 	deploymentpb "go.temporal.io/api/deployment/v1"
@@ -6617,6 +6618,107 @@ func (s *mutableStateSuite) TestApplyWorkflowExecutionTimeSkippingTransitionedEv
 		s.Require().False(s.mutableState.GetExecutionInfo().TimeSkippingInfo.Config.Enabled)
 		accumulated := s.mutableState.GetExecutionInfo().TimeSkippingInfo.AccumulatedSkippedDuration
 		s.Require().Equal(2*time.Hour, accumulated.AsDuration())
+	})
+}
+
+func (s *mutableStateSuite) TestWrapTimeSourceWithTimeSkipping() {
+	const skipped = 2 * time.Hour
+	fixedBase := time.Date(2024, 6, 1, 10, 0, 0, 0, time.UTC)
+
+	// fixedTimeSource returns fixedBase and is used as the base time source for subtests
+	// that need deterministic virtual-time assertions.
+	fixedTimeSource := func() *clock.EventTimeSource {
+		ts := clock.NewEventTimeSource()
+		ts.Update(fixedBase)
+		return ts
+	}
+
+	s.Run("NoOpWhenTimeSkippingInfoNil", func() {
+		s.mutableState.executionInfo.TimeSkippingInfo = nil
+		original := s.mutableState.timeSource
+
+		s.mutableState.wrapTimeSourceWithTimeSkipping()
+
+		s.Equal(original, s.mutableState.timeSource)
+		_, isWrapper := s.mutableState.timeSource.(*clock.TimeSkippingTimeSourceWrapper)
+		s.False(isWrapper)
+	})
+
+	s.Run("WrapsTimeSourceWhenTimeSkippingInfoSet", func() {
+		s.mutableState.timeSource = fixedTimeSource()
+		s.mutableState.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
+			AccumulatedSkippedDuration: durationpb.New(skipped),
+		}
+
+		s.mutableState.wrapTimeSourceWithTimeSkipping()
+
+		_, isWrapper := s.mutableState.timeSource.(*clock.TimeSkippingTimeSourceWrapper)
+		s.True(isWrapper)
+		s.Equal(fixedBase.Add(skipped), s.mutableState.timeSource.Now())
+	})
+
+	s.Run("IdempotentWhenAlreadyWrapped", func() {
+		s.mutableState.timeSource = fixedTimeSource()
+		s.mutableState.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
+			AccumulatedSkippedDuration: durationpb.New(skipped),
+		}
+		s.mutableState.wrapTimeSourceWithTimeSkipping()
+		wrappedOnce := s.mutableState.timeSource
+
+		s.mutableState.wrapTimeSourceWithTimeSkipping()
+
+		s.Equal(wrappedOnce, s.mutableState.timeSource, "second call must not double-wrap")
+	})
+
+	s.Run("HBuilderUsesVirtualTime", func() {
+		s.mutableState.timeSource = fixedTimeSource()
+		s.mutableState.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
+			AccumulatedSkippedDuration: durationpb.New(skipped),
+		}
+
+		s.mutableState.wrapTimeSourceWithTimeSkipping()
+
+		event := s.mutableState.hBuilder.AddHistoryEvent(
+			enumspb.EVENT_TYPE_TIMER_FIRED,
+			func(e *historypb.HistoryEvent) {
+				e.Attributes = &historypb.HistoryEvent_TimerFiredEventAttributes{
+					TimerFiredEventAttributes: &historypb.TimerFiredEventAttributes{TimerId: "t1"},
+				}
+			},
+		)
+		s.Equal(fixedBase.Add(skipped), event.GetEventTime().AsTime())
+	})
+}
+
+func (s *mutableStateSuite) TestInitTimeSkippingInfoAndWrapTimeSource() {
+	const skipped = time.Hour
+
+	s.Run("InitializesNilTimeSkippingInfo", func() {
+		s.mutableState.executionInfo.TimeSkippingInfo = nil
+
+		s.mutableState.initTimeSkippingInfoAndWrapTimeSource()
+
+		s.NotNil(s.mutableState.executionInfo.TimeSkippingInfo)
+	})
+
+	s.Run("KeepsExistingTimeSkippingInfo", func() {
+		existing := &persistencespb.TimeSkippingInfo{
+			AccumulatedSkippedDuration: durationpb.New(skipped),
+		}
+		s.mutableState.executionInfo.TimeSkippingInfo = existing
+
+		s.mutableState.initTimeSkippingInfoAndWrapTimeSource()
+
+		s.Equal(existing, s.mutableState.executionInfo.TimeSkippingInfo)
+	})
+
+	s.Run("WrapsTimeSourceAfterInit", func() {
+		s.mutableState.executionInfo.TimeSkippingInfo = nil
+
+		s.mutableState.initTimeSkippingInfoAndWrapTimeSource()
+
+		_, isWrapper := s.mutableState.timeSource.(*clock.TimeSkippingTimeSourceWrapper)
+		s.True(isWrapper)
 	})
 }
 

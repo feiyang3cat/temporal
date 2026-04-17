@@ -6,8 +6,8 @@ import (
 	persistencespb "go.temporal.io/server/api/persistence/v1"
 )
 
-// TimeSkippingTimeSourceWrapper is a wrapper TimeSource that accepts a base TimeSource and an optiona TimeSkippingInfo.
-// If no valid TimeSkippingInfo is provided, the TimeSkippingTimeSourceWrapper will fallback to the base TimeSource.
+// TimeSkippingTimeSourceWrapper is a wrapper TimeSource that accepts a base TimeSource and an optional TimeSkippingInfo.
+// If no valid TimeSkippingInfo is provided, the TimeSkippingTimeSourceWrapper will not apply time-skipping effects.
 // If provided, the TimeSkippingTimeSourceWrapper will offset Now() by the accumulated skipped duration.
 // Methods of Since, AfterFunc, and NewTimer will not be wrapped with time-skipping effects.
 type TimeSkippingTimeSourceWrapper struct {
