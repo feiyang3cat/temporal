@@ -84,6 +84,10 @@ func Invoke(
 			if err != nil {
 				return nil, err
 			}
+			err = validateTimeSkippingConfig(requestedOptions.GetTimeSkippingConfig(), mutableState)
+			if err != nil {
+				return nil, err
+			}
 
 			mergedOpts, hasChanges, err := MergeAndApply(mutableState, requestedOptions, req.GetUpdateMask(), req.GetIdentity())
 			if err != nil {
@@ -122,6 +126,29 @@ func Invoke(
 	api.ReactivateVersionWorkflowIfPinned(ctx, ns, versioningOverrideForReactivation, reactivationSignaler, shardCtx.GetConfig().EnableVersionReactivationSignals(), shouldSkipReactivation, revisionNumber)
 
 	return ret, nil
+}
+
+// validate time skipping config before merging
+func validateTimeSkippingConfig(newTimeSkippingConfig *workflowpb.TimeSkippingConfig, ms historyi.MutableState) error {
+	if newTimeSkippingConfig == nil || !newTimeSkippingConfig.GetEnabled() || newTimeSkippingConfig.GetBound() == nil {
+		return nil
+	}
+	bound, ok := newTimeSkippingConfig.GetBound().(*workflowpb.TimeSkippingConfig_MaxSkippedDuration)
+	if !ok {
+		return nil
+	}
+	skippedDuration := ms.GetExecutionInfo().GetTimeSkippingInfo().GetAccumulatedSkippedDuration()
+	if skippedDuration == nil {
+		return nil
+	}
+	if bound.MaxSkippedDuration.AsDuration() < skippedDuration.AsDuration() {
+		return serviceerror.NewInvalidArgumentf(
+			"max skipped duration shall be larger than current accumulated skipped duration: %v < %v",
+			bound.MaxSkippedDuration.AsDuration(),
+			skippedDuration.AsDuration(),
+		)
+	}
+	return nil
 }
 
 // MergeAndApply merges the requested options mentioned in the field mask with the current options in the mutable state
