@@ -6776,6 +6776,7 @@ func (wh *WorkflowHandler) UpdateWorkflowExecutionOptions(
 
 	return &workflowservice.UpdateWorkflowExecutionOptionsResponse{
 		WorkflowExecutionOptions: response.WorkflowExecutionOptions,
+		UpdateTime:               response.UpdateTime,
 	}, nil
 }
 

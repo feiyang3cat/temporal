@@ -1447,9 +1447,8 @@ func TestTaskGeneratorImpl_RegenerateTimerTasksForTimeSkipping_BoundTimer(t *tes
 			name: "bound configured and unreached emits task",
 			tsi: &persistencespb.TimeSkippingInfo{
 				Config: &workflowpb.TimeSkippingConfig{
-					Enabled: true,
-					Bound:   &workflowpb.TimeSkippingConfig_MaxElapsedDuration{MaxElapsedDuration: durationpb.New(2 * time.Hour)},
-				},
+					Enabled:     true,
+					FastForward: durationpb.New(2 * time.Hour)},
 				AccumulatedSkippedDuration: durationpb.New(time.Hour),
 				CurrentElapsedDurationBound: &persistencespb.TimeSkippingBoundInfo{
 					TargetTime:    timestamppb.New(boundTarget),
@@ -1463,9 +1462,8 @@ func TestTaskGeneratorImpl_RegenerateTimerTasksForTimeSkipping_BoundTimer(t *tes
 			name: "HasReached=true skips task emission",
 			tsi: &persistencespb.TimeSkippingInfo{
 				Config: &workflowpb.TimeSkippingConfig{
-					Enabled: true,
-					Bound:   &workflowpb.TimeSkippingConfig_MaxElapsedDuration{MaxElapsedDuration: durationpb.New(2 * time.Hour)},
-				},
+					Enabled:     true,
+					FastForward: durationpb.New(2 * time.Hour)},
 				AccumulatedSkippedDuration: durationpb.New(time.Hour),
 				CurrentElapsedDurationBound: &persistencespb.TimeSkippingBoundInfo{
 					TargetTime:    timestamppb.New(boundTarget),
@@ -1478,9 +1476,8 @@ func TestTaskGeneratorImpl_RegenerateTimerTasksForTimeSkipping_BoundTimer(t *tes
 			name: "Enabled=false skips task emission",
 			tsi: &persistencespb.TimeSkippingInfo{
 				Config: &workflowpb.TimeSkippingConfig{
-					Enabled: false,
-					Bound:   &workflowpb.TimeSkippingConfig_MaxElapsedDuration{MaxElapsedDuration: durationpb.New(2 * time.Hour)},
-				},
+					Enabled:     false,
+					FastForward: durationpb.New(2 * time.Hour)},
 				AccumulatedSkippedDuration: durationpb.New(time.Hour),
 				CurrentElapsedDurationBound: &persistencespb.TimeSkippingBoundInfo{
 					TargetTime:    timestamppb.New(boundTarget),

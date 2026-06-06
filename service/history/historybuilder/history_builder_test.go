@@ -2602,25 +2602,25 @@ func (s *historyBuilderSuite) TestAddWorkflowExecutionTimeSkippingTransitionedEv
 		s.NotNil(attrs.TargetTime)
 		s.Equal(targetTime, attrs.TargetTime.AsTime())
 		s.NotNil(attrs.WallClockTime)
-		s.False(attrs.DisabledAfterBound)
+		s.False(attrs.DisabledAfterFastForward)
 	})
 
-	s.Run("DisabledAfterBoundPropagated", func() {
+	s.Run("DisabledAfterFastForwardPropagated", func() {
 		event := s.historyBuilder.AddWorkflowExecutionTimeSkippingTransitionedEvent(targetTime, true)
 
 		attrs := event.GetWorkflowExecutionTimeSkippingTransitionedEventAttributes()
 		s.NotNil(attrs)
-		s.True(attrs.DisabledAfterBound)
+		s.True(attrs.DisabledAfterFastForward)
 		s.True(event.WorkerMayIgnore)
 	})
 
-	// no targetTime and only disabledAfterBound is true
-	s.Run("NoTargetTimeAndOnlyDisabledAfterBoundIsTrue", func() {
+	// no targetTime and only disabledAfterFastForward is true
+	s.Run("NoTargetTimeAndOnlyDisabledAfterFastForwardIsTrue", func() {
 		event := s.historyBuilder.AddWorkflowExecutionTimeSkippingTransitionedEvent(time.Time{}, true)
 
 		attrs := event.GetWorkflowExecutionTimeSkippingTransitionedEventAttributes()
 		s.NotNil(attrs)
-		s.True(attrs.DisabledAfterBound)
+		s.True(attrs.DisabledAfterFastForward)
 		s.True(event.WorkerMayIgnore)
 	})
 }
