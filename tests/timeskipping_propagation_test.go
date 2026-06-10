@@ -225,7 +225,7 @@ func (s *TimeSkippingPropagationTestSuite) TestTSPInChildWf_Basic() {
 	s.NotNil(initTSC, "initiated event should carry TimeSkippingConfig snapshot")
 	s.True(initTSC.GetEnabled(), "snapshot mirrors parent's Enabled flag")
 	s.Nil(initTSC.GetFastForward(), "initiated-event snapshot excludes the parent's FastForward")
-	s.approxDuration(time.Hour, initAttrs.GetInitialSkippedDuration().AsDuration(),
+	s.approxDuration(time.Hour, initAttrs.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration(),
 		"initiated event InitialSkippedDuration == parent's AccumulatedSkippedDuration at command time (1h)")
 }
 
@@ -352,7 +352,7 @@ func (s *TimeSkippingPropagationTestSuite) TestTSPInChildWf_TwoChildren() {
 		tsc := attrs.GetTimeSkippingConfig()
 		s.NotNil(tsc)
 		s.True(tsc.GetEnabled())
-		s.approxDuration(time.Hour, attrs.GetInitialSkippedDuration().AsDuration())
+		s.approxDuration(time.Hour, attrs.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration())
 	}
 }
 
@@ -510,14 +510,14 @@ func (s *TimeSkippingPropagationTestSuite) TestTSPInChildWf_ThreeGenerations() {
 	s.Len(gInit, 1)
 	gInitAttrs := gInit[0].GetStartChildWorkflowExecutionInitiatedEventAttributes()
 	s.NotNil(gInitAttrs.GetTimeSkippingConfig())
-	s.approxDuration(time.Hour, gInitAttrs.GetInitialSkippedDuration().AsDuration())
+	s.approxDuration(time.Hour, gInitAttrs.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration())
 
 	pRunID := pMS.State.ExecutionState.RunId
 	pInit := s.initiatedChildEvents(ctx, env, pWFID, pRunID)
 	s.Len(pInit, 1)
 	pInitAttrs := pInit[0].GetStartChildWorkflowExecutionInitiatedEventAttributes()
 	s.NotNil(pInitAttrs.GetTimeSkippingConfig())
-	s.approxDuration(3*time.Hour, pInitAttrs.GetInitialSkippedDuration().AsDuration(),
+	s.approxDuration(3*time.Hour, pInitAttrs.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration(),
 		"P's initiated event for C carries P's full accumulated at command time (3h = G's 1h + P's pt1 2h)")
 }
 
@@ -1216,7 +1216,7 @@ func (s *TimeSkippingPropagationTestSuite) TestTSPInRetry() {
 	s.True(startedTSC.GetEnabled(), "started event TSC.Enabled mirrors attempt 1's current config")
 	s.Equal(4*time.Hour, startedTSC.GetFastForward().AsDuration(),
 		"started event carries the inherited FastForward — the snapshot of attempt 1's current config")
-	s.approxDuration(time.Hour, startedAttr.GetInitialSkippedDuration().AsDuration(),
+	s.approxDuration(time.Hour, startedAttr.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration(),
 		"started event InitialSkippedDuration carries attempt 1's in-flight accumulated skip (1h) at retry time")
 }
 
@@ -1352,7 +1352,7 @@ func (s *TimeSkippingPropagationTestSuite) TestTSPInCron() {
 		"run 2 is initiated by cron schedule")
 	s.True(proto.Equal(inputCfg, startedAttr.GetTimeSkippingConfig()),
 		"started event carries Enabled=true, FastForward=1h — the snapshot from run 1's current config")
-	s.InDelta(float64(50*time.Minute), float64(startedAttr.GetInitialSkippedDuration().AsDuration()), float64(90*time.Second),
+	s.InDelta(float64(50*time.Minute), float64(startedAttr.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration()), float64(90*time.Second),
 		"started event InitialSkippedDuration carries run 1's in-flight accumulated skip at cron-rollover time")
 }
 
@@ -1607,6 +1607,6 @@ func (s *TimeSkippingPropagationTestSuite) TestTSPInChildWf_PropagationDisabled(
 	initAttrs := initEvents[0].GetStartChildWorkflowExecutionInitiatedEventAttributes()
 	s.Nil(initAttrs.GetTimeSkippingConfig(),
 		"initiated event must carry no TimeSkippingConfig when DisableChildPropagation is set")
-	s.Zero(initAttrs.GetInitialSkippedDuration().AsDuration(),
+	s.Zero(initAttrs.GetTimeSkippingStatePropagation().GetInitialSkippedDuration().AsDuration(),
 		"initiated event must carry no InitialSkippedDuration when DisableChildPropagation is set")
 }

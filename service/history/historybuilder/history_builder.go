@@ -770,14 +770,14 @@ func (b *HistoryBuilder) AddStartChildWorkflowExecutionInitiatedEvent(
 	command *commandpb.StartChildWorkflowExecutionCommandAttributes,
 	targetNamespaceID namespace.ID,
 	timeSkippingConfig *workflowpb.TimeSkippingConfig,
-	initialSkippedDuration *durationpb.Duration,
+	statePropagation *workflowpb.TimeSkippingStatePropagation,
 ) (*historypb.HistoryEvent, int64) {
 	event := b.EventFactory.CreateStartChildWorkflowExecutionInitiatedEvent(
 		workflowTaskCompletedEventID,
 		command,
 		targetNamespaceID,
 		timeSkippingConfig,
-		initialSkippedDuration,
+		statePropagation,
 	)
 	return b.add(event)
 }

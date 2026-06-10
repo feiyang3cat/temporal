@@ -2707,7 +2707,7 @@ func (ms *MutableStateImpl) addWorkflowExecutionStartedEventForContinueAsNew(
 	}
 	declinedTargetVersionUpgrade := computeDeclinedTargetVersionUpgrade(previousExecutionInfo, inheritedPinnedVersion != nil)
 
-	tsc, initialSkip := propagateTimeSkippingToNextRun(previousExecutionInfo)
+	tsc, stateProp := propagateTimeSkippingToNextRun(previousExecutionInfo)
 	createRequest := &workflowservice.StartWorkflowExecutionRequest{
 		RequestId:                uuid.NewString(),
 		Namespace:                ms.namespaceEntry.Name().String(),
@@ -2763,7 +2763,7 @@ func (ms *MutableStateImpl) addWorkflowExecutionStartedEventForContinueAsNew(
 		InheritedPinnedVersion:       inheritedPinnedVersion,
 		VersioningOverride:           pinnedOverride,
 		DeclinedTargetVersionUpgrade: declinedTargetVersionUpgrade,
-		InitialSkippedDuration:       initialSkip,
+		TimeSkippingStatePropagation: stateProp,
 	}
 	if command.GetInitiator() == enumspb.CONTINUE_AS_NEW_INITIATOR_RETRY {
 		req.Attempt = previousExecutionState.GetExecutionInfo().Attempt + 1
@@ -3170,8 +3170,8 @@ func (ms *MutableStateImpl) ApplyWorkflowExecutionStartedEvent(
 	ms.executionInfo.MostRecentWorkerVersionStamp = event.SourceVersionStamp
 	ms.executionInfo.Priority = event.Priority
 
-	if tsc, initialSkip := event.GetTimeSkippingConfig(), event.GetInitialSkippedDuration(); tsc != nil || initialSkip.AsDuration() > 0 {
-		ms.initTimeSkippingInfo(tsc, initialSkip, startEvent.GetEventId())
+	if tsc, stateProp := event.GetTimeSkippingConfig(), event.GetTimeSkippingStatePropagation(); tsc != nil || stateProp.GetInitialSkippedDuration().AsDuration() > 0 {
+		ms.initTimeSkippingInfo(tsc, stateProp, startEvent.GetEventId())
 	}
 
 	ms.approximateSize += ms.executionInfo.Size()
@@ -6340,13 +6340,13 @@ func (ms *MutableStateImpl) AddStartChildWorkflowExecutionInitiatedEvent(
 	if err := ms.checkMutability(opTag); err != nil {
 		return nil, nil, err
 	}
-	childTSC, childInitialSkip := propagateTimeSkippingToChild(ms.executionInfo)
+	childTSC, childStateProp := propagateTimeSkippingToChild(ms.executionInfo)
 	event, batchID := ms.hBuilder.AddStartChildWorkflowExecutionInitiatedEvent(
 		workflowTaskCompletedEventID,
 		command,
 		targetNamespaceID,
 		childTSC,
-		childInitialSkip,
+		childStateProp,
 	)
 	ci, err := ms.ApplyStartChildWorkflowExecutionInitiatedEvent(batchID, event)
 	if err != nil {
@@ -9977,19 +9977,19 @@ func (ms *MutableStateImpl) shiftWorkflowTimes(initialSkippedDuration *durationp
 
 func (ms *MutableStateImpl) initTimeSkippingInfo(
 	config *workflowpb.TimeSkippingConfig,
-	initialSkippedDuration *durationpb.Duration,
+	statePropagation *workflowpb.TimeSkippingStatePropagation,
 	currentEventID int64,
 ) {
+	initialSkippedDuration := statePropagation.GetInitialSkippedDuration()
 	ms.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
 		Config:                     config,
 		AccumulatedSkippedDuration: initialSkippedDuration,
 	}
 	ms.wrapTimeSourceWithTimeSkipping()
 	ms.shiftWorkflowTimes(initialSkippedDuration)
-	// when starting a new execution, we apply a full cap on the total skip across the lineage,
-	// so the inherited skip (initialSkippedDuration, now in AccumulatedSkippedDuration) counts
-	// against it.
-	ms.applyFastForward(currentEventID, true)
+	// Use the propagated fast-forward target time as the source of truth for chain handoffs.
+	// Passing nil here (e.g. no propagation, or child workflows) computes target = now + ff.
+	ms.applyFastForward(currentEventID, statePropagation.GetFastForwardTargetTime())
 	ms.timeSkippingInfoUpdated = true
 }
 
@@ -9998,16 +9998,19 @@ func (ms *MutableStateImpl) updateTimeSkippingInfo(
 	currentEventID int64,
 ) {
 	ms.executionInfo.TimeSkippingInfo.Config = config
-	// when updating the config, we always refresh the fast forward target from now.
-	ms.applyFastForward(currentEventID, false)
+	// Options update: the new ff duration is a fresh budget measured from now.
+	ms.applyFastForward(currentEventID, nil)
 	ms.timeSkippingInfoUpdated = true
 }
 
-// applyFastForward (re)computes the FastForwardInfo target and its wake-up timer task from
-// the current TimeSkippingConfig. It should be called whenever the config is installed or
-// updated. fast forward can be a cap on the total skip across a chain of runs, or
-// as a fresh budget from now.Now()
-func (ms *MutableStateImpl) applyFastForward(currentEventID int64, needFullCap bool) {
+// applyFastForward (re)computes the FastForwardInfo target and its wake-up timer task from the
+// current TimeSkippingConfig. propagatedTargetTime is the fast-forward target carried from the
+// previous run in a chain handoff (CaN, retry, cron). If non-nil it is used directly as the
+// target — this is the source of truth, avoiding the buggy full-cap recomputation
+// (target = now + (ff - accumulated)) which breaks whenever the config was updated or the
+// chain has multiple runs. If nil, the target is computed fresh as now + ff, which is correct
+// for the initial registration and for options-update paths.
+func (ms *MutableStateImpl) applyFastForward(currentEventID int64, propagatedTargetTime *timestamppb.Timestamp) {
 	config := ms.GetExecutionInfo().GetTimeSkippingInfo().GetConfig()
 	tsi := ms.executionInfo.TimeSkippingInfo
 
@@ -10019,20 +10022,20 @@ func (ms *MutableStateImpl) applyFastForward(currentEventID int64, needFullCap b
 		return
 	}
 
-	// set a new fast forward
-	remaining := config.GetFastForward().AsDuration()
-	if needFullCap {
-		remaining -= ms.accumulatedSkippedDuration()
-		if remaining < 0 {
-			ms.logger.Error("fast forward remaining duration is less than 0, set target time to now",
-				tag.WorkflowNamespaceID(ms.GetExecutionInfo().NamespaceId),
-				tag.WorkflowID(ms.GetExecutionInfo().WorkflowId),
-				tag.WorkflowRunID(ms.GetExecutionState().RunId),
-			)
-			remaining = 0
+	var targetTime time.Time
+	if propagatedTargetTime != nil {
+		// Chain handoff: use the absolute virtual-time target from the previous run.
+		// If the target is already past (budget exhausted), disable time-skipping entirely.
+		targetTime = propagatedTargetTime.AsTime()
+		if !targetTime.After(ms.Now()) {
+			tsi.FastForward = nil
+			config.Enabled = false
+			return
 		}
+	} else {
+		// Fresh budget: target = now + ff (initial registration or options-update).
+		targetTime = ms.Now().Add(config.GetFastForward().AsDuration())
 	}
-	targetTime := ms.Now().Add(remaining)
 	tsi.FastForward = &persistencespb.FastForwardInfo{
 		TargetTime:    timestamppb.New(targetTime),
 		SourceEventId: currentEventID,
