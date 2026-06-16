@@ -4158,34 +4158,16 @@ func (ms *MutableStateImpl) AddWorkflowExecutionTimeSkippingTransitionedEvent(
 
 // ApplyWorkflowExecutionTimeSkippingTransitionedEvent applies the WorkflowExecutionTimeSkippingTransitionedEvent to the mutable state.
 func (ms *MutableStateImpl) ApplyWorkflowExecutionTimeSkippingTransitionedEvent(ctx context.Context, event *historypb.HistoryEvent) error {
-
 	attr := event.GetWorkflowExecutionTimeSkippingTransitionedEventAttributes()
-	tsi := ms.executionInfo.GetTimeSkippingInfo()
-
-	opTag := tag.WorkflowActionWorkflowExecutionTimeSkippingTransitioned
-	invalidTransitionError := serviceerror.NewInternal("TimeSkippingTransitionedEvent failed to apply")
-	if tsi == nil {
-		ms.logError("TimeSkippingTransitionedEvent failed to apply: TimeSkippingInfo is nil", opTag)
-		return invalidTransitionError
-	}
-	if attr.TargetTime == nil && !attr.GetDisabledAfterFastForward() {
-		ms.logError("TimeSkippingTransitionedEvent failed to apply: TargetTime is nil and disabled after fast-forward is false", opTag)
-		return invalidTransitionError
-	}
-
-	// update time
+	var targetTime time.Time
 	if !timeNotSet(attr.TargetTime) {
-		asd := ms.accumulatedSkippedDuration() + attr.TargetTime.AsTime().Sub(event.GetEventTime().AsTime())
-		tsi.AccumulatedSkippedDuration = durationpb.New(asd)
+		targetTime = attr.TargetTime.AsTime()
 	}
-	// update enabled state
-	tsi.Config.Enabled = !attr.GetDisabledAfterFastForward()
-	if attr.GetDisabledAfterFastForward() && tsi.GetFastForwardInfo() != nil {
-		tsi.FastForwardInfo.HasReached = true
-	}
-
-	ms.timeSkippingInfoUpdated = true
-	return nil
+	return ms.applyTimeSkippingTransition(chasm.TimeSkippingTransition{
+		CurrentTime:              event.GetEventTime().AsTime(),
+		TargetTime:               targetTime,
+		DisabledAfterFastForward: attr.GetDisabledAfterFastForward(),
+	})
 }
 
 func (ms *MutableStateImpl) ApplyWorkflowTaskFailedEvent() error {
@@ -7669,10 +7651,7 @@ func (ms *MutableStateImpl) closeTransaction(
 	// Run time-skipping after closeTransactionHandleWorkflowTask so a just-scheduled
 	// workflow task is visible to (and suppresses) the idle check, and before isStateDirty
 	// so the transition event we emit here participates in the dirty-state computation.
-	// todo@time-skipping: but chasm close transaction logic is after isStateDirty,
-	// and need to reconsider the sequence of time skipping close trx handling in this function
-	// when supporting chasm.
-	regenTimerTasksForTimeSkipping := ms.closeTransactionHandleTimeSkipping(ctx, transactionPolicy)
+	timeSkippingRegenTasksForWorkflows := ms.closeTransactionHandleWorkflowTimeSkipping(ctx, transactionPolicy)
 
 	// Save if the state is dirty before closeTransactionPrepareEvents since it flushes the buffer
 	// events, and therefore change the dirty state.
@@ -7724,6 +7703,8 @@ func (ms *MutableStateImpl) closeTransaction(
 		ms.chasmNodeSizes[nodePath] = newSize
 	}
 
+	// todo@time-skipping:  chasm close transaction logic is after isStateDirty,
+	// need to check if this impacts chasm time skipping logic
 	if isStateDirty {
 		if err := ms.closeTransactionUpdateTransitionHistory(
 			transactionPolicy,
@@ -7744,7 +7725,7 @@ func (ms *MutableStateImpl) closeTransaction(
 		transactionPolicy,
 		eventBatches,
 		clearBuffer,
-		regenTimerTasksForTimeSkipping,
+		timeSkippingRegenTasksForWorkflows,
 	); err != nil {
 		return closeTransactionResult{}, err
 	}
@@ -8176,6 +8157,7 @@ func (ms *MutableStateImpl) closeTransactionPrepareTasks(
 	if err := ms.closeTransactionHandleActivityUserTimerTasks(transactionPolicy); err != nil {
 		return err
 	}
+	// todo: this is only for workflows not for chasm-based executions
 	if regenerateTimerTasksForTimeSkipping {
 		if err := ms.closeTransactionRegenerateTimerTasksForTimeSkipping(transactionPolicy); err != nil {
 			return err
@@ -8897,19 +8879,23 @@ func (ms *MutableStateImpl) closeTransactionHandleActivityUserTimerTasks(
 	}
 }
 
-func (ms *MutableStateImpl) closeTransactionHandleTimeSkipping(
+func (ms *MutableStateImpl) closeTransactionHandleWorkflowTimeSkipping(
 	ctx context.Context,
 	transactionPolicy historyi.TransactionPolicy,
 ) (regenTimerTasksForTimeSkipping bool) {
 	switch transactionPolicy {
 	case historyi.TransactionPolicyActive:
+		if !ms.IsWorkflow() {
+			return false
+		}
 		if !ms.IsWorkflowExecutionRunning() {
 			return false
 		}
 		if shouldExecute, transition := ms.shouldExecuteTimeSkipping(); shouldExecute {
-			_, err := ms.AddWorkflowExecutionTimeSkippingTransitionedEvent(
-				ctx, transition.targetTime, transition.disabledAfterFastForward)
-			if err != nil {
+			// Route through the shared apply sink. For the workflow archetype this records a history
+			// event (event-based path); the candidate/fast-forward min was already done in
+			// calculateTimeSkippingTransition.
+			if err := ms.RecordTimeSkippingTransition(ctx, *transition, ms.ChasmTree().ArchetypeID()); err != nil {
 				ms.metricsHandler.Counter(metrics.ExecutionTimeSkippingTransitionedErrorCounter.Name()).Record(1)
 				ms.logger.Error(
 					"failed to add workflow execution time skipping transitioned event, and ignore this error and continue",
@@ -8919,7 +8905,7 @@ func (ms *MutableStateImpl) closeTransactionHandleTimeSkipping(
 				)
 				return false
 			}
-			if transition.targetTime.IsZero() {
+			if transition.TargetTime.IsZero() {
 				return false
 			}
 			return true
@@ -8939,6 +8925,9 @@ func (ms *MutableStateImpl) closeTransactionHandleTimeSkipping(
 func (ms *MutableStateImpl) closeTransactionRegenerateTimerTasksForTimeSkipping(
 	transactionPolicy historyi.TransactionPolicy,
 ) error {
+	if !ms.IsWorkflow() {
+		return nil
+	}
 	switch transactionPolicy {
 	case historyi.TransactionPolicyActive:
 		if !ms.IsWorkflowExecutionRunning() {
@@ -10059,10 +10048,50 @@ func (ms *MutableStateImpl) applyFastForward(currentEventID int64, propagatedTar
 		SourceEventId: currentEventID,
 		HasReached:    false,
 	}
+	// Emit the fast-forward wake timer. Both archetypes keep the wake in mutable state (not the chasm
+	// task pipeline), so all time-skipping concerns stay in execution info. The only difference is the
+	// staleness anchor: workflows anchor on the installing event id; CHASM has no event id (see
+	// chasmNoEventID) and uses the shared re-emit helper, which is also called on every skip to keep the
+	// wake's wall-clock fire time in sync with the accumulated skip.
+	if ms.IsWorkflow() {
+		ms.AddTasks(&tasks.TimeSkippingTimerTask{
+			WorkflowKey:         ms.GetWorkflowKey(),
+			VisibilityTimestamp: targetTime,
+			EventID:             currentEventID,
+		})
+	} else {
+		ms.regenerateChasmFastForwardWakeTask()
+	}
+}
+
+// regenerateChasmFastForwardWakeTask (re)emits the fast-forward wake timer for a CHASM (non-workflow)
+// execution. The wake fires at FastForwardInfo.TargetTime in the virtual frame; AddTasks converts it to
+// wall clock via ToRealTime, so its real fire time is TargetTime - accumulatedSkippedDuration. It is
+// emitted on config init/update (applyFastForward) and re-emitted whenever a skip advances the
+// accumulated duration (applyTimeSkippingTransition), so the wake always tracks the current virtual
+// clock. Bundling the re-emit with the accumulated update keeps the wake in mutable state rather than
+// routing it through the chasm task pipeline. No-op for workflows (they emit/refresh on the
+// event-based path) and once the fast-forward target is reached.
+//
+// Staleness: each skip leaves older (later-firing) wake duplicates in the queue. They are harmless —
+// the soonest (current) wake fires first and disables time skipping (FastForwardInfo.HasReached), after
+// which fastForwardTaskIsLive drops the rest. The only unhandled edge is a mid-flight config update that
+// EXTENDS the fast-forward (a later target), where an older, sooner wake could prematurely disable.
+// CHASM has no event id to distinguish generations, but closing that edge needs neither an event id nor
+// a VersionedTransition: treat a non-workflow wake as live only when its VisibilityTimestamp equals
+// ToRealTime(currentFastForwardTarget). Left unimplemented until mid-flight extension is a real scenario.
+func (ms *MutableStateImpl) regenerateChasmFastForwardWakeTask() {
+	if ms.IsWorkflow() {
+		return
+	}
+	ff := ms.executionInfo.GetTimeSkippingInfo().GetFastForwardInfo()
+	if ff == nil || ff.GetHasReached() || ff.GetTargetTime() == nil {
+		return
+	}
 	ms.AddTasks(&tasks.TimeSkippingTimerTask{
 		WorkflowKey:         ms.GetWorkflowKey(),
-		VisibilityTimestamp: targetTime,
-		EventID:             currentEventID,
+		VisibilityTimestamp: ff.GetTargetTime().AsTime(), // virtual; AddTasks -> ToRealTime shifts to wall clock
+		EventID:             chasmNoEventID,
 	})
 }
 
@@ -10113,7 +10142,7 @@ func (ms *MutableStateImpl) hasInflightWorkToPreventTimeSkipping() (bool, string
 
 // ShouldExecuteTimeSkipping checks if one mutable state should execute time skipping,
 // i.e. there is no in-flight work and there is a time point to skip to.
-func (ms *MutableStateImpl) shouldExecuteTimeSkipping() (bool, *timeSkippingTransition) {
+func (ms *MutableStateImpl) shouldExecuteTimeSkipping() (bool, *chasm.TimeSkippingTransition) {
 	// configuration check
 	tsi := ms.GetExecutionInfo().GetTimeSkippingInfo()
 	if tsi == nil {
@@ -10160,20 +10189,11 @@ func (ms *MutableStateImpl) shouldExecuteTimeSkipping() (bool, *timeSkippingTran
 		)
 		return false, nil
 	}
-	if !transition.isValid() {
+	if !transition.IsValid() {
 		noSkippingReason = "time skipping has no candidate target time nor disabled after fast-forward flag"
 		return false, nil
 	}
 	return true, &transition
-}
-
-type timeSkippingTransition struct {
-	targetTime               time.Time
-	disabledAfterFastForward bool
-}
-
-func (d timeSkippingTransition) isValid() bool {
-	return !d.targetTime.IsZero() || d.disabledAfterFastForward
 }
 
 // calculateTimeSkippingTransition determines the next skip target.
@@ -10183,12 +10203,12 @@ func (d timeSkippingTransition) isValid() bool {
 // a cap: if any candidate wins, the skip target is clamped to min(target,
 // runExpiry, execExpiry). This ensures we never advance virtual time past the
 // workflow timeout, even when a user timer or fast-forward would otherwise overshoot.
-func (ms *MutableStateImpl) calculateTimeSkippingTransition() (timeSkippingTransition, error) {
-	var transition timeSkippingTransition
+func (ms *MutableStateImpl) calculateTimeSkippingTransition() (chasm.TimeSkippingTransition, error) {
+	var transition chasm.TimeSkippingTransition
 	advance := func(candidate time.Time, dueToFastForward bool) {
-		if transition.targetTime.IsZero() || candidate.Before(transition.targetTime) {
-			transition.targetTime = candidate
-			transition.disabledAfterFastForward = dueToFastForward
+		if transition.TargetTime.IsZero() || candidate.Before(transition.TargetTime) {
+			transition.TargetTime = candidate
+			transition.DisabledAfterFastForward = dueToFastForward
 		}
 	}
 
@@ -10230,7 +10250,7 @@ func (ms *MutableStateImpl) calculateTimeSkippingTransition() (timeSkippingTrans
 	// them. Timeouts alone do not create a skip target — only existing candidates
 	// (timers, backoffs, fast-forward) do. This also handles the case where a user
 	// timer fires past the workflow timeout: we cap the skip so the timeout fires on schedule.
-	if !transition.targetTime.IsZero() {
+	if !transition.TargetTime.IsZero() {
 		if t := ms.executionInfo.GetWorkflowRunExpirationTime(); t != nil && !t.AsTime().IsZero() {
 			advance(t.AsTime(), false)
 		}

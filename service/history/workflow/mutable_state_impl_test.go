@@ -8501,7 +8501,7 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 		resetMS()
 		t, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.False(t.isValid())
+		s.False(t.IsValid())
 	})
 
 	s.Run("OneUserTimer_TargetIsTimer", func() {
@@ -8511,8 +8511,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		t, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(t1, t.targetTime)
-		s.False(t.disabledAfterFastForward)
+		s.Equal(t1, t.TargetTime)
+		s.False(t.DisabledAfterFastForward)
 	})
 
 	s.Run("TwoUserTimers_TargetIsEarliest", func() {
@@ -8524,8 +8524,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(t1, tr.targetTime)
-		s.False(tr.disabledAfterFastForward)
+		s.Equal(t1, tr.TargetTime)
+		s.False(tr.DisabledAfterFastForward)
 	})
 
 	s.Run("UserTimer_PlusEarlierFastForward_TargetIsFastForward", func() {
@@ -8539,8 +8539,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(fastForwardTarget, tr.targetTime)
-		s.True(tr.disabledAfterFastForward)
+		s.Equal(fastForwardTarget, tr.TargetTime)
+		s.True(tr.DisabledAfterFastForward)
 	})
 
 	s.Run("ZeroFastForward_NilTarget_NoErrorNoCandidate", func() {
@@ -8552,7 +8552,7 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.False(tr.isValid())
+		s.False(tr.IsValid())
 	})
 
 	s.Run("Backoff_NotChildAndExecutionTimeFuture_IsCandidate", func() {
@@ -8566,8 +8566,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(execTime, tr.targetTime)
-		s.False(tr.disabledAfterFastForward)
+		s.Equal(execTime, tr.TargetTime)
+		s.False(tr.DisabledAfterFastForward)
 	})
 
 	s.Run("Backoff_ChildWFCase_NotCandidate", func() {
@@ -8579,7 +8579,7 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.False(tr.isValid(),
+		s.False(tr.IsValid(),
 			"child WF without backoff and no other candidate must yield invalid transition")
 	})
 
@@ -8600,7 +8600,7 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.False(tr.isValid(),
+		s.False(tr.IsValid(),
 			"backoff in the virtual past must not produce a transition candidate")
 	})
 
@@ -8616,8 +8616,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(schedTime, tr.targetTime)
-		s.False(tr.disabledAfterFastForward)
+		s.Equal(schedTime, tr.TargetTime)
+		s.False(tr.DisabledAfterFastForward)
 	})
 
 	s.Run("TwoActivitiesInBackoff_TargetIsEarliest", func() {
@@ -8635,7 +8635,7 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(early, tr.targetTime)
+		s.Equal(early, tr.TargetTime)
 	})
 
 	s.Run("ActivityBackoff_PlusEarlierTimer_TargetIsTimer", func() {
@@ -8650,7 +8650,7 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(timerTime, tr.targetTime)
+		s.Equal(timerTime, tr.TargetTime)
 	})
 
 	// Universal cap: skip target must not exceed the run/execution timeout.
@@ -8673,8 +8673,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(runExpiry, tr.targetTime, "skip must be capped at run timeout")
-		s.False(tr.disabledAfterFastForward, "cap fires before fast-forward; fast-forward must not be marked reached")
+		s.Equal(runExpiry, tr.TargetTime, "skip must be capped at run timeout")
+		s.False(tr.DisabledAfterFastForward, "cap fires before fast-forward; fast-forward must not be marked reached")
 	})
 
 	s.Run("FastForward_SmallerThanRunTimeout_NoCap_TargetIsFastForward", func() {
@@ -8686,8 +8686,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(fastForwardTarget, tr.targetTime, "fast-forward is minimum; no cap applies")
-		s.True(tr.disabledAfterFastForward, "fast-forward fires before run timeout; fast-forward must be marked reached")
+		s.Equal(fastForwardTarget, tr.TargetTime, "fast-forward is minimum; no cap applies")
+		s.True(tr.DisabledAfterFastForward, "fast-forward fires before run timeout; fast-forward must be marked reached")
 	})
 
 	s.Run("FastForward_LargerThanExecTimeout_NoRunTimeout_CappedAtExecTimeout", func() {
@@ -8700,8 +8700,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(execExpiry, tr.targetTime, "skip must be capped at execution timeout")
-		s.False(tr.disabledAfterFastForward, "cap fires before fast-forward; fast-forward must not be marked reached")
+		s.Equal(execExpiry, tr.TargetTime, "skip must be capped at execution timeout")
+		s.False(tr.DisabledAfterFastForward, "cap fires before fast-forward; fast-forward must not be marked reached")
 	})
 
 	s.Run("FastForward_ZeroRunTimeout_TreatedAsNoTimeout_NoCap", func() {
@@ -8715,8 +8715,8 @@ func (s *mutableStateSuite) TestCalculateTimeSkippingTransition() {
 
 		tr, err := s.mutableState.calculateTimeSkippingTransition()
 		s.Require().NoError(err)
-		s.Equal(fastForwardTarget, tr.targetTime, "zero timeout must not cap the skip")
-		s.True(tr.disabledAfterFastForward)
+		s.Equal(fastForwardTarget, tr.TargetTime, "zero timeout must not cap the skip")
+		s.True(tr.DisabledAfterFastForward)
 	})
 }
 
