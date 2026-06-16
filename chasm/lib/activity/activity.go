@@ -124,6 +124,29 @@ func (a *Activity) LifecycleState(_ chasm.Context) chasm.LifecycleState {
 	}
 }
 
+// HasInflightWork implements chasm.TimeSkippingRoot. It reports whether advancing virtual time would
+// skip past real work, gating the framework's per-transaction time-skipping decision.
+//
+// The only idle (skippable) state is SCHEDULED while still waiting for the next dispatch — i.e. out
+// of a start delay or a retry backoff, with the next-attempt time strictly in the (virtual) future.
+// Once that time arrives (the dispatch task is pushed to matching and the activity is waiting for a
+// poller), or the attempt is running (STARTED), or a cancel is being processed (CANCEL_REQUESTED),
+// there is work in flight and time must not skip past it. Closed states report in-flight too; they
+// have no future timers to skip to, so this only ever blocks (never skips) on a closed activity.
+//
+// This mirrors the workflow time-skipping rule for activities: a pending activity blocks skipping
+// unless it is waiting out a retry backoff whose next attempt is in the future.
+func (a *Activity) HasInflightWork(ctx chasm.Context) bool {
+	if a.GetStatus() != activitypb.ACTIVITY_EXECUTION_STATUS_SCHEDULED {
+		return true
+	}
+	nextDispatch := a.attemptScheduleTime(a.LastAttempt.Get(ctx))
+	if nextDispatch == nil {
+		return true
+	}
+	return !ctx.Now(a).Before(nextDispatch.AsTime())
+}
+
 func (a *Activity) ContextMetadata(_ chasm.Context) map[string]string {
 	md := make(map[string]string, 2)
 	if actType := a.GetActivityType().GetName(); actType != "" {

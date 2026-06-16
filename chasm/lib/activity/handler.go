@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"errors"
+	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -14,6 +15,7 @@ import (
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/metrics"
 	"go.temporal.io/server/common/namespace"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 var (
@@ -82,6 +84,22 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 			newActivity, err := NewStandaloneActivity(mutableContext, request)
 			if err != nil {
 				return nil, err
+			}
+
+			// Opt the standalone activity into time skipping so its start delay and retry backoffs
+			// are fast-forwarded while it is idle (see Activity.HasInflightWork). Honor the config
+			// supplied on the request; when none is provided, default to enabled with a 1h
+			// fast-forward budget (POC default). Gated on the namespace feature flag.
+			//
+			// TODO(time-skipping): mirror the workflow frontend validation
+			// (dynamicconfig.TimeSkippingEnabled -> Unimplemented when off) instead of silently
+			// gating here, and reconsider whether a nil request config should default to enabled.
+			if h.config.TimeSkippingEnabled(frontendReq.GetNamespace()) {
+				tsc := request.GetTimeSkippingConfig()
+				if tsc == nil {
+					tsc = &commonpb.TimeSkippingConfig{Enabled: true, FastForward: durationpb.New(time.Hour)}
+				}
+				mutableContext.InitTimeSkippingConfig(tsc)
 			}
 
 			if cbs := request.GetCompletionCallbacks(); len(cbs) > 0 {

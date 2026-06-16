@@ -233,6 +233,25 @@ type (
 			requestID string,
 		) (nexusrpc.CompleteOperationOptions, error)
 		EndpointRegistry() EndpointRegistry
+		InitTimeSkippingConfig(config *commonpb.TimeSkippingConfig)
+		UpdateTimeSkippingConfig(config *commonpb.TimeSkippingConfig)
+		// ChasmTimeSkippingEnabled reports whether time skipping is enabled for this execution, so
+		// the framework can cheaply gate its per-transaction time-skipping handling.
+		ChasmTimeSkippingEnabled() bool
+		// ApplyChasmTimeSkipping advances the execution's virtual clock toward candidateTargetVirtual
+		// (the earliest pending future-scheduled CHASM timer task, in the virtual frame), combined
+		// with the fast-forward target. The framework calls it during CloseTransaction once it has
+		// confirmed the execution is idle.
+		ApplyChasmTimeSkipping(candidateTargetVirtual time.Time) error
+	}
+
+	// nowProvider is an optional capability of a NodeBackend: a backend that owns its own clock
+	// (mutable state, whose clock reflects the execution's time-skipping offset) implements it so
+	// that Node.Now() reads a single, time-skipping-aware clock shared with the rest of the
+	// execution. Backends that do not implement it (e.g. bare test mocks) cause Node.Now() to fall
+	// back to the tree's own timeSource.
+	nowProvider interface {
+		Now() time.Time
 	}
 
 	// NodePathEncoder is an interface for encoding and decoding node paths.
@@ -1599,7 +1618,15 @@ func (n *Node) dataNodePath(
 func (n *Node) Now(
 	_ Component,
 ) time.Time {
+	// Delegate to the backend when it owns a (time-skipping-aware) clock so that CHASM and the rest
+	// of the execution share a single clock; mutable state's clock reflects the execution's
+	// time-skipping offset. Fall back to the tree's own timeSource for backends that don't provide
+	// one (e.g. bare test mocks).
+	//
 	// TODO: Now() could be different for components after we support Pause for CHASM components.
+	if np, ok := n.backend.(nowProvider); ok {
+		return np.Now()
+	}
 	return n.timeSource.Now()
 }
 
@@ -1916,6 +1943,18 @@ func (n *Node) closeTransactionUpdateComponentTasks(
 
 	archetypeID := n.ArchetypeID()
 
+	// When time skipping is enabled for this execution, the framework fast-forwards virtual time
+	// during CloseTransaction once the execution is idle (see closeTransactionHandleTimeSkipping).
+	// The skip must be applied BEFORE physical timer tasks are generated so their visibility times
+	// (converted to wall clock in MutableState.AddTasks via ToRealTime) reflect the new accumulated
+	// skip. We therefore defer physical side-effect task generation until after the skip decision;
+	// the physical pure task is already generated after the loop. earliestTimer accumulates the
+	// candidate skip target: the earliest future-scheduled CategoryTimer task across the whole tree
+	// (pure or side-effect).
+	timeSkippingEnabled := n.backend.ChasmTimeSkippingEnabled()
+	var deferredSideEffectTaskGen []func()
+	var earliestTimer time.Time
+
 	var firstPureTask *persistencespb.ChasmComponentAttributes_Task
 	var firstPureTaskNode *Node
 
@@ -1986,11 +2025,24 @@ func (n *Node) closeTransactionUpdateComponentTasks(
 				break
 			}
 
-			node.closeTransactionGeneratePhysicalSideEffectTask(
-				sideEffectTask,
-				nodePath,
-				archetypeID,
-			)
+			if timeSkippingEnabled {
+				// Defer until after the skip decision so the physical task's visibility reflects the
+				// new accumulated skip. Capture loop variables.
+				node, sideEffectTask, nodePath := node, sideEffectTask, nodePath
+				deferredSideEffectTaskGen = append(deferredSideEffectTaskGen, func() {
+					node.closeTransactionGeneratePhysicalSideEffectTask(sideEffectTask, nodePath, archetypeID)
+				})
+			} else {
+				node.closeTransactionGeneratePhysicalSideEffectTask(
+					sideEffectTask,
+					nodePath,
+					archetypeID,
+				)
+			}
+		}
+
+		if timeSkippingEnabled {
+			trackEarliestTimerTask(componentAttr, &earliestTimer)
 		}
 
 		// Find the first pure task in the entire tree,
@@ -2007,6 +2059,19 @@ func (n *Node) closeTransactionUpdateComponentTasks(
 		}
 	}
 
+	if timeSkippingEnabled {
+		// Apply the skip (mutating accumulated skipped duration) before generating any physical
+		// timer tasks, then run the deferred side-effect task generation. The physical pure task is
+		// generated below. All of them flow through MutableState.AddTasks, which shifts scheduled
+		// visibility times to wall clock using the now-updated accumulated skip.
+		if err := n.closeTransactionHandleTimeSkipping(earliestTimer); err != nil {
+			return err
+		}
+		for _, gen := range deferredSideEffectTaskGen {
+			gen()
+		}
+	}
+
 	// TODO: We cannot simply assert that all tasks in n.nodeBase.newTasks are processed.
 	// That should be the case when only one transition for each transaction.
 	// However, when processing pure tasks, we run multiple pure tasks, thus multiple transitions
@@ -2018,6 +2083,75 @@ func (n *Node) closeTransactionUpdateComponentTasks(
 		firstPureTaskNode,
 		archetypeID,
 	)
+}
+
+// trackEarliestTimerTask updates *earliest with the earliest future-scheduled CategoryTimer task
+// (pure or side-effect) found on componentAttr. The result is the time-skipping candidate target:
+// the next point in virtual time the execution is waiting on. Only CategoryTimer tasks are wakes on
+// a delay; CategoryTransfer/CategoryOutbound tasks are immediate work, and CategoryVisibility is
+// bookkeeping — none are skip targets.
+func trackEarliestTimerTask(
+	componentAttr *persistencespb.ChasmComponentAttributes,
+	earliest *time.Time,
+) {
+	consider := func(task *persistencespb.ChasmComponentAttributes_Task) {
+		if taskCategory(task) != tasks.CategoryTimer {
+			return
+		}
+		scheduledTime := task.GetScheduledTime().AsTime()
+		if earliest.IsZero() || scheduledTime.Before(*earliest) {
+			*earliest = scheduledTime
+		}
+	}
+	for _, task := range componentAttr.GetPureTasks() {
+		consider(task)
+	}
+	for _, task := range componentAttr.GetSideEffectTasks() {
+		consider(task)
+	}
+}
+
+// closeTransactionHandleTimeSkipping runs the per-transaction time-skipping decision for a CHASM
+// execution whose root component opted in (config enabled). earliestTimer is the candidate skip
+// target computed by trackEarliestTimerTask. The framework decides idleness here: it asks the root
+// component (via TimeSkippingRoot.HasInflightWork) whether real work is in flight; if not, it hands
+// the candidate to the backend (MutableState.ApplyChasmTimeSkipping), which combines it with the
+// fast-forward target, advances virtual time, and records the skip on the TimeSkippingInfo.
+//
+// Task regeneration after a skip: the caller applies the skip BEFORE generating physical tasks, so
+// the physical pure task (always regenerated every close, via closeTransactionGeneratePhysicalPureTask)
+// and any physical side-effect tasks generated this transaction pick up the new accumulated offset
+// through MutableState.AddTasks -> ToRealTime. This is sufficient for components (like the standalone
+// activity) where the wake task is added and skipped in the same transaction.
+//
+// TODO(time-skipping/chasm): make regeneration cover ALL outstanding physical timer tasks, not just
+// the ones (re)generated this transaction. A physical side-effect timer task created in an earlier
+// transaction (CategoryTimer, physicalTaskStatusCreated) is not re-stamped here, so if a skip later
+// targets it, it would fire late by the skipped amount. The complete version should re-emit every
+// outstanding CategoryTimer physical task (pure already handled; side-effect created-status ones are
+// the gap) with the new offset on a skip — analogous to the workflow path's
+// RegenerateTimerTasksForTimeSkipping, which re-stamps all timer tasks.
+func (n *Node) closeTransactionHandleTimeSkipping(earliestTimer time.Time) error {
+	if earliestTimer.IsZero() {
+		// No future-scheduled timer to skip to.
+		return nil
+	}
+
+	immutableContext := NewContext(context.Background(), n)
+	rootComponent, err := n.Component(immutableContext, ComponentRef{})
+	if err != nil {
+		return err
+	}
+	tsRoot, ok := rootComponent.(TimeSkippingRoot)
+	if !ok {
+		// The execution enabled time skipping but its root component doesn't implement the
+		// interface, so the framework has no way to tell whether it's idle — don't skip.
+		return nil
+	}
+	if tsRoot.HasInflightWork(immutableContext) {
+		return nil
+	}
+	return n.backend.ApplyChasmTimeSkipping(earliestTimer)
 }
 
 func (n *Node) deserializeComponentTask(

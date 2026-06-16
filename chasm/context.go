@@ -97,6 +97,18 @@ type MutableContext interface {
 	// SetUserMetadata replaces the user metadata attached to the given component.
 	SetUserMetadata(Component, *sdkpb.UserMetadata) error
 
+	// InitTimeSkippingConfig and UpdateTimeSkippingConfig manage the execution's time-skipping
+	// configuration. These are framework-provided methods: a root component opts into time
+	// skipping by calling InitTimeSkippingConfig when the execution is created and
+	// UpdateTimeSkippingConfig when the configuration changes.
+	//
+	// Unlike most MutableContext methods, these take no Component argument. Time-skipping
+	// configuration is per-execution scope (not per-component), so it is set directly on the
+	// context, alongside the other execution-scoped accessors such as ExecutionKey() and
+	// ExecutionInfo().
+	InitTimeSkippingConfig(config *commonpb.TimeSkippingConfig)
+	UpdateTimeSkippingConfig(config *commonpb.TimeSkippingConfig)
+
 	// Get a Ref for the component
 	// This ref to the component state at the end of the transition
 	// Same as Ref(Component) method in Context,
@@ -270,6 +282,14 @@ func (c *mutableCtx) SetRequestLinks(component Component, requestID string, link
 
 func (c *mutableCtx) SetUserMetadata(component Component, md *sdkpb.UserMetadata) error {
 	return c.root.setComponentUserMetadata(component, md)
+}
+
+func (c *mutableCtx) InitTimeSkippingConfig(config *commonpb.TimeSkippingConfig) {
+	c.root.backend.InitTimeSkippingConfig(config)
+}
+
+func (c *mutableCtx) UpdateTimeSkippingConfig(config *commonpb.TimeSkippingConfig) {
+	c.root.backend.UpdateTimeSkippingConfig(config)
 }
 
 func (c *mutableCtx) withValue(key any, value any) Context {

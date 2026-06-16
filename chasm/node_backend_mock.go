@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	enumsspb "go.temporal.io/server/api/enums/v1"
@@ -39,6 +40,10 @@ type MockNodeBackend struct {
 	HandleHasAnyBufferedEvent         func(filter func(*historypb.HistoryEvent) bool) bool
 	HandleGetNamespaceEntry           func() *namespace.Namespace
 	HandleEndpointRegistry            func() EndpointRegistry
+	HandleInitTimeSkippingConfig      func(config *commonpb.TimeSkippingConfig)
+	HandleUpdateTimeSkippingConfig    func(config *commonpb.TimeSkippingConfig)
+	HandleChasmTimeSkippingEnabled    func() bool
+	HandleApplyChasmTimeSkipping      func(candidateTargetVirtual time.Time) error
 
 	// Recorded calls (protected by mu).
 	mu                  sync.Mutex
@@ -109,6 +114,32 @@ func (m *MockNodeBackend) AddTasks(ts ...tasks.Task) {
 		category := task.GetCategory()
 		m.TasksByCategory[category] = append(m.TasksByCategory[category], task)
 	}
+}
+
+func (m *MockNodeBackend) InitTimeSkippingConfig(config *commonpb.TimeSkippingConfig) {
+	if m.HandleInitTimeSkippingConfig != nil {
+		m.HandleInitTimeSkippingConfig(config)
+	}
+}
+
+func (m *MockNodeBackend) UpdateTimeSkippingConfig(config *commonpb.TimeSkippingConfig) {
+	if m.HandleUpdateTimeSkippingConfig != nil {
+		m.HandleUpdateTimeSkippingConfig(config)
+	}
+}
+
+func (m *MockNodeBackend) ChasmTimeSkippingEnabled() bool {
+	if m.HandleChasmTimeSkippingEnabled != nil {
+		return m.HandleChasmTimeSkippingEnabled()
+	}
+	return false
+}
+
+func (m *MockNodeBackend) ApplyChasmTimeSkipping(candidateTargetVirtual time.Time) error {
+	if m.HandleApplyChasmTimeSkipping != nil {
+		return m.HandleApplyChasmTimeSkipping(candidateTargetVirtual)
+	}
+	return nil
 }
 
 func (m *MockNodeBackend) DeleteCHASMPureTasks(maxScheduledTime time.Time) {
