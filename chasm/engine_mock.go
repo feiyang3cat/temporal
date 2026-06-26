@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	commonpb "go.temporal.io/api/common/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -103,6 +104,20 @@ func (mr *MockEngineMockRecorder) ReadComponent(arg0, arg1, arg2 any, arg3 ...an
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0, arg1, arg2}, arg3...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadComponent", reflect.TypeOf((*MockEngine)(nil).ReadComponent), varargs...)
+}
+
+// SetTimeSkippingConfig mocks base method.
+func (m *MockEngine) SetTimeSkippingConfig(arg0 context.Context, arg1 ComponentRef, arg2 *commonpb.TimeSkippingConfig) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetTimeSkippingConfig", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetTimeSkippingConfig indicates an expected call of SetTimeSkippingConfig.
+func (mr *MockEngineMockRecorder) SetTimeSkippingConfig(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetTimeSkippingConfig", reflect.TypeOf((*MockEngine)(nil).SetTimeSkippingConfig), arg0, arg1, arg2)
 }
 
 // StartExecution mocks base method.

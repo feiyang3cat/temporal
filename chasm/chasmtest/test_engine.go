@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	enumsspb "go.temporal.io/server/api/enums/v1"
@@ -233,6 +234,30 @@ func (e *Engine) UpdateComponent(
 		return nil, err
 	}
 	return e.updateComponentInExecution(ctx, execution, ref, updateFn)
+}
+
+// SetTimeSkippingConfig writes the per-execution time-skipping config (design Option 4: dedicated
+// engine operation), mirroring UpdateComponent: it runs MutableContext.SetTimeSkippingConfig(config)
+// in its own transaction on the addressed execution.
+func (e *Engine) SetTimeSkippingConfig(
+	ctx context.Context,
+	ref chasm.ComponentRef,
+	config *commonpb.TimeSkippingConfig,
+) error {
+	execution, err := e.executionForRef(ref)
+	if err != nil {
+		return err
+	}
+	_, err = e.updateComponentInExecution(
+		ctx,
+		execution,
+		ref,
+		func(mutableContext chasm.MutableContext, _ chasm.Component) error {
+			mutableContext.SetTimeSkippingConfig(config)
+			return nil
+		},
+	)
+	return err
 }
 
 func (e *Engine) ReadComponent(

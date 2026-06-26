@@ -95,10 +95,6 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 				}
 			}
 
-			if request.GetTimeSkippingConfig() != nil {
-				mutableContext.SetTimeSkippingConfig(request.GetTimeSkippingConfig())
-			}
-
 			err = TransitionScheduled.Apply(newActivity, mutableContext, nil)
 			if err != nil {
 				return nil, err
@@ -118,6 +114,22 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 		}
 
 		return nil, err
+	}
+
+	// Time-skipping opt-in (design Option 4: dedicated engine operation).
+	//
+	// Unlike Option 1 (which set the config inside StartExecution's startFn, in the same transaction
+	// that creates the execution), Option 4 routes the opt-in through the standalone
+	// chasm.SetTimeSkippingConfig engine operation. That cannot join the start transaction, so this is
+	// a second transaction after start. It runs synchronously here, before we return — and the activity
+	// is only dispatched to a worker on a subsequent poll — so the config is established before the
+	// activity is first polled, leaving observable behavior unchanged. This is the documented Option-4
+	// start-time awkwardness, accepted for this PoC.
+	if result.Created && frontendReq.GetTimeSkippingConfig() != nil {
+		ref := chasm.NewComponentRef[*Activity](result.ExecutionKey)
+		if err := chasm.SetTimeSkippingConfig(ctx, ref, frontendReq.GetTimeSkippingConfig()); err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply on_conflict_options to an existing activity.
