@@ -5,6 +5,7 @@ package chasm
 import (
 	"context"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/server/common/log"
 )
 
@@ -86,6 +87,11 @@ type TransitionOptions struct {
 	ConflictPolicy BusinessIDConflictPolicy
 	RequestID      string
 	Speculative    bool
+	// TimeSkippingConfig, when non-nil, is applied by the engine inside the start transaction by
+	// calling MutableContext.SetTimeSkippingConfig. It only applies to the start path
+	// (StartExecution / UpdateWithStartExecution) and reuses the existing time-skipping write sink;
+	// it does not write TimeSkippingInfo directly.
+	TimeSkippingConfig *commonpb.TimeSkippingConfig
 }
 
 type TransitionOption func(*TransitionOptions)
@@ -169,6 +175,19 @@ func WithRequestID(
 ) TransitionOption {
 	return func(opts *TransitionOptions) {
 		opts.RequestID = requestID
+	}
+}
+
+// WithTimeSkippingConfig opts the new execution into time skipping with the given config.
+// The engine applies it inside the start transaction by calling
+// MutableContext.SetTimeSkippingConfig (the existing time-skipping write sink); it does not
+// write TimeSkippingInfo directly. A nil config is a no-op.
+// This option only applies to StartExecution() and UpdateWithStartExecution().
+func WithTimeSkippingConfig(
+	config *commonpb.TimeSkippingConfig,
+) TransitionOption {
+	return func(opts *TransitionOptions) {
+		opts.TimeSkippingConfig = config
 	}
 }
 

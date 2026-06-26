@@ -877,6 +877,13 @@ func (e *ChasmEngine) createNewExecutionWithUpdate(
 		return newExecutionParams{}, err
 	}
 
+	// Option 3 (engine transition option): if the caller opted into time skipping via
+	// chasm.WithTimeSkippingConfig, apply it inside the start transaction by reusing the existing
+	// MutableContext.SetTimeSkippingConfig sink. This does not write TimeSkippingInfo directly.
+	if options.TimeSkippingConfig != nil {
+		chasmContext.SetTimeSkippingConfig(options.TimeSkippingConfig)
+	}
+
 	if updateFn != nil {
 		if err = updateFn(chasmContext, rootComponent); err != nil {
 			return newExecutionParams{}, err
