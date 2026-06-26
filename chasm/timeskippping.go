@@ -23,6 +23,21 @@ type TimeSkippingController interface {
 	SetTimeSkippingConfig(config *commonpb.TimeSkippingConfig)
 }
 
+// TimeSkippingConfigProvider is an optional component-implemented interface through which a root
+// component DECLARES its time-skipping config, rather than imperatively pushing it via
+// MutableContext.SetTimeSkippingConfig. The framework PULLS the declared config once per transaction
+// (in CloseTransaction) and, if the execution's TimeSkippingInfo has not yet been initialized,
+// forwards a non-nil config to the unchanged NodeBackend.SetTimeSkippingConfig sink. This keeps the
+// single source of truth (TimeSkippingInfo on WorkflowExecutionInfo) and the history substrate
+// untouched; only the opt-in surface moves onto the component. ROOT COMPONENT ONLY — the framework
+// consults only the root component's implementation.
+type TimeSkippingConfigProvider interface {
+	// TimeSkippingConfig returns the execution's desired time-skipping config, or nil to not opt in.
+	// The framework reads it once during start / close-transaction and forwards a non-nil value to
+	// the time-skipping config sink only while TimeSkippingInfo is still uninitialized.
+	TimeSkippingConfig(ctx Context) *commonpb.TimeSkippingConfig
+}
+
 // TimeSkippable is the mandatory component-implemented half of the time-skipping contract. The root
 // component of an execution that opts into time skipping implements it so the framework can decide, once
 // per transaction, whether the execution is idle enough to fast-forward virtual time. ROOT COMPONENT
