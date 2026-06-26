@@ -5,6 +5,7 @@ package chasm
 import (
 	"context"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/server/common/log"
 )
 
@@ -52,6 +53,17 @@ type Engine interface {
 		context.Context,
 		ComponentRef,
 		DeleteExecutionRequest,
+	) error
+
+	// SetTimeSkippingConfig is the Option-4 (dedicated engine operation) entry point for writing the
+	// per-execution time-skipping config. It loads the execution addressed by the ref and writes the
+	// config through the existing MutableContext.SetTimeSkippingConfig capability, in its own
+	// transaction. Note that this means start-time opt-in (e.g. the standalone activity) becomes a
+	// second transaction after StartExecution: see the design doc's Option-4 discussion.
+	SetTimeSkippingConfig(
+		context.Context,
+		ComponentRef,
+		*commonpb.TimeSkippingConfig,
 	) error
 
 	// NotifyExecution notifies any PollComponent callers waiting on the execution.
@@ -424,6 +436,23 @@ func DeleteExecution[C RootComponent](
 		NewComponentRef[C](key),
 		request,
 	)
+}
+
+// SetTimeSkippingConfig writes the per-execution time-skipping config to the execution identified by
+// the supplied component reference, via the dedicated engine operation (design Option 4). This is a
+// standalone transaction: it loads the lease, runs MutableContext.SetTimeSkippingConfig(config), and
+// commits. It reuses the existing write path (NodeBackend.SetTimeSkippingConfig →
+// MutableStateImpl.SetTimeSkippingConfig); no storage/substrate change.
+func SetTimeSkippingConfig[R []byte | ComponentRef](
+	ctx context.Context,
+	r R,
+	config *commonpb.TimeSkippingConfig,
+) error {
+	ref, err := convertComponentRef(r)
+	if err != nil {
+		return err
+	}
+	return engineFromContext(ctx).SetTimeSkippingConfig(ctx, ref, config)
 }
 
 func convertComponentRef[R []byte | ComponentRef](

@@ -545,6 +545,49 @@ func (e *ChasmEngine) updateComponent(
 	return e.applyUpdateWithLease(ctx, shardContext, executionLease, ref, updateFn)
 }
 
+// SetTimeSkippingConfig writes the per-execution time-skipping config to the execution addressed by
+// ref (design Option 4: dedicated engine operation). It mirrors UpdateComponent's lease/transaction
+// plumbing, but its updateFn body is exactly mutableContext.SetTimeSkippingConfig(config) — i.e. it
+// reuses the existing write path (NodeBackend.SetTimeSkippingConfig → MutableStateImpl) rather than
+// touching TimeSkippingInfo directly. This is its own transaction, so opt-in-at-start is a second
+// round-trip after StartExecution.
+func (e *ChasmEngine) SetTimeSkippingConfig(
+	ctx context.Context,
+	ref chasm.ComponentRef,
+	config *commonpb.TimeSkippingConfig,
+) error {
+	options := e.constructTransitionOptions()
+	err := e.setTimeSkippingConfig(ctx, ref, config)
+	return e.convertError(err, ref, options.RequestID)
+}
+
+func (e *ChasmEngine) setTimeSkippingConfig(
+	ctx context.Context,
+	ref chasm.ComponentRef,
+	config *commonpb.TimeSkippingConfig,
+) (retError error) {
+	shardContext, executionLease, err := e.getExecutionLease(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		executionLease.GetReleaseFn()(retError)
+	}()
+
+	_, err = e.applyUpdateWithLease(
+		ctx,
+		shardContext,
+		executionLease,
+		ref,
+		func(mutableContext chasm.MutableContext, _ chasm.Component) error {
+			mutableContext.SetTimeSkippingConfig(config)
+			return nil
+		},
+	)
+	return err
+}
+
 // DeleteExecution deletes a CHASM execution. If the execution is still running on the active
 // cluster, it is terminated first. A DeleteExecutionTask is then queued to remove all execution
 // data from persistence. On standby clusters, the execution is deleted regardless of state.
