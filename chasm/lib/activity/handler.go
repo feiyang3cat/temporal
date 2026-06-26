@@ -72,6 +72,17 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 
 	maxCallbacks := h.config.MaxCallbacksPerExecution(frontendReq.GetNamespace())
 
+	startOpts := []chasm.TransitionOption{
+		chasm.WithRequestID(frontendReq.GetRequestId()),
+		chasm.WithBusinessIDPolicy(reusePolicy, conflictPolicy),
+	}
+	// Option 3 (engine transition option): thread the time-skipping config through as a transition
+	// option instead of calling SetTimeSkippingConfig inside startFn. The engine applies it within
+	// the start transaction.
+	if frontendReq.GetTimeSkippingConfig() != nil {
+		startOpts = append(startOpts, chasm.WithTimeSkippingConfig(frontendReq.GetTimeSkippingConfig()))
+	}
+
 	result, err := chasm.StartExecution(
 		ctx,
 		chasm.ExecutionKey{
@@ -95,10 +106,6 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 				}
 			}
 
-			if request.GetTimeSkippingConfig() != nil {
-				mutableContext.SetTimeSkippingConfig(request.GetTimeSkippingConfig())
-			}
-
 			err = TransitionScheduled.Apply(newActivity, mutableContext, nil)
 			if err != nil {
 				return nil, err
@@ -107,8 +114,7 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 			return newActivity, nil
 		},
 		frontendReq,
-		chasm.WithRequestID(frontendReq.GetRequestId()),
-		chasm.WithBusinessIDPolicy(reusePolicy, conflictPolicy),
+		startOpts...,
 	)
 
 	if err != nil {
