@@ -95,9 +95,9 @@ func (h *handler) StartActivityExecution(ctx context.Context, req *activitypb.St
 				}
 			}
 
-			if request.GetTimeSkippingConfig() != nil {
-				mutableContext.SetTimeSkippingConfig(request.GetTimeSkippingConfig())
-			}
+			// Time-skipping opt-in is declared by the component via chasm.TimeSkippingConfigProvider
+			// (NewStandaloneActivity stores request.GetTimeSkippingConfig()); the framework pulls it
+			// during the start transaction and forwards it to the time-skipping config sink.
 
 			err = TransitionScheduled.Apply(newActivity, mutableContext, nil)
 			if err != nil {

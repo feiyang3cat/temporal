@@ -2050,10 +2050,6 @@ func (n *Node) closeTransactionHandleTimeSkipping() error {
 		// todo: remove after workflows get migrated to CHASM
 		return nil
 	}
-	tsi := n.backend.GetExecutionInfo().GetTimeSkippingInfo()
-	if !tsi.GetConfig().GetEnabled() {
-		return nil
-	}
 
 	// The chasm framework distinguishes active vs passive via isActiveStateDirty: it is set only for
 	// active-cluster user-data mutations and is never set by replication (ApplyMutation/ApplySnapshot)
@@ -2084,12 +2080,32 @@ func (n *Node) closeTransactionHandleTimeSkipping() error {
 		return nil
 	}
 
-	// Active cluster: make and apply the time-skipping decision.
+	// Active cluster: resolve the root component, then make and apply the time-skipping decision.
 	immutableContext := NewContext(context.Background(), n)
 	rootComponent, err := n.Component(immutableContext, ComponentRef{})
 	if err != nil {
 		return err
 	}
+
+	// Option 2 (component-declared config): PULL the time-skipping config the root component declares
+	// via TimeSkippingConfigProvider and forward a non-nil value to the unchanged
+	// NodeBackend.SetTimeSkippingConfig sink, but only while TimeSkippingInfo is still uninitialized
+	// (i.e. the start transaction). Data continues to live in TimeSkippingInfo on WorkflowExecutionInfo;
+	// only the opt-in surface lives on the component. This must run BEFORE the enabled gate below so a
+	// fresh execution that opts in this transaction proceeds to the skip computation.
+	if n.backend.GetExecutionInfo().GetTimeSkippingInfo() == nil {
+		if provider, ok := rootComponent.(TimeSkippingConfigProvider); ok {
+			if config := provider.TimeSkippingConfig(immutableContext); config != nil {
+				n.backend.SetTimeSkippingConfig(config)
+			}
+		}
+	}
+
+	tsi := n.backend.GetExecutionInfo().GetTimeSkippingInfo()
+	if !tsi.GetConfig().GetEnabled() {
+		return nil
+	}
+
 	tsRoot, ok := rootComponent.(TimeSkippable)
 	if !ok {
 		// todo: add a metric for alert in real implementation

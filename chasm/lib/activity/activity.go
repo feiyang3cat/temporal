@@ -56,6 +56,7 @@ var (
 var _ chasm.VisibilitySearchAttributesProvider = (*Activity)(nil)
 var _ callback.CompletionSource = (*Activity)(nil)
 var _ chasm.TimeSkippable = (*Activity)(nil)
+var _ chasm.TimeSkippingConfigProvider = (*Activity)(nil)
 
 type ActivityStore interface {
 	// RecordCompleted applies the provided function to record activity completion
@@ -84,6 +85,23 @@ type Activity struct {
 	// Callbacks holds completion callbacks to be invoked when this standalone activity reaches a terminal state. Nil
 	// for workflow-embedded activities as the workflow handles its own callbacks.
 	Callbacks chasm.Map[string, *callback.Callback]
+
+	// timeSkippingConfig holds the time-skipping config declared by the start request, surfaced to the
+	// framework through the chasm.TimeSkippingConfigProvider interface (Option 2: component-declared
+	// config). It is wrapped in a non-proto struct on purpose: a bare *commonpb.TimeSkippingConfig field
+	// would be misclassified by the CHASM field iterator as a second proto data field. It is NOT
+	// persisted as component state — the single source of truth remains TimeSkippingInfo on
+	// WorkflowExecutionInfo, which the framework writes via the unchanged NodeBackend.SetTimeSkippingConfig
+	// sink during the start transaction. It is only meaningful in the in-memory start transaction where it
+	// opts the execution in; the zero value (nil config) means the execution did not opt in.
+	timeSkippingConfig timeSkippingConfigHolder
+}
+
+// timeSkippingConfigHolder wraps the declared time-skipping config so the field is not assignable to
+// proto.Message and is therefore ignored by the CHASM component field iterator (it is unexported,
+// in-memory-only declaration state, not persisted component data).
+type timeSkippingConfigHolder struct {
+	config *commonpb.TimeSkippingConfig
 }
 
 // WithToken wraps a request with its deserialized task token.
@@ -143,6 +161,13 @@ func (a *Activity) HasInflightWork(ctx chasm.Context) bool {
 	return false
 }
 
+// TimeSkippingConfig implements chasm.TimeSkippingConfigProvider. It declares the time-skipping config
+// supplied on the start request so the framework can pull it and forward it to the time-skipping config
+// sink during the start transaction. Returns nil when the activity did not opt into time skipping.
+func (a *Activity) TimeSkippingConfig(_ chasm.Context) *commonpb.TimeSkippingConfig {
+	return a.timeSkippingConfig.config
+}
+
 func (a *Activity) ContextMetadata(_ chasm.Context) map[string]string {
 	md := make(map[string]string, 2)
 	if actType := a.GetActivityType().GetName(); actType != "" {
@@ -193,6 +218,8 @@ func NewStandaloneActivity(
 		}),
 		Outcome:    chasm.NewDataField(ctx, &activitypb.ActivityOutcome{}),
 		Visibility: chasm.NewComponentField(ctx, visibility),
+
+		timeSkippingConfig: timeSkippingConfigHolder{config: request.GetTimeSkippingConfig()},
 	}
 
 	if md := request.GetUserMetadata(); md != nil {
