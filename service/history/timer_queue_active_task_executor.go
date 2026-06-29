@@ -927,12 +927,22 @@ func (t *timerQueueActiveTaskExecutor) executeTimeSkippingTimerTask(
 		return consts.ErrWorkflowExecutionNotFound
 	}
 
+	// todo@time-skipping: chasm execution path is not implemented yet.
+	if !mutableState.IsWorkflow() {
+		release(nil)
+		return nil
+	}
+
 	if !mutableState.IsWorkflowExecutionRunning() {
 		release(nil)
 		return consts.ErrWorkflowCompleted
 	}
 
-	if !fastForwardTaskIsLive(mutableState, task) {
+	if err := CheckTaskVersion(t.shardContext, t.logger, mutableState.GetNamespaceEntry(), mutableState.GetCurrentVersion(), task.Version, task); err != nil {
+		return err
+	}
+
+	if !checkIsFastForwardTaskValid(mutableState, task) {
 		release(nil)
 		return errNoTimerFired
 	}
@@ -945,20 +955,18 @@ func (t *timerQueueActiveTaskExecutor) executeTimeSkippingTimerTask(
 	return t.updateWorkflowExecution(ctx, weContext, mutableState, false)
 }
 
-// fastForwardTaskIsLive returns false when the task should be dropped silently —
-// either time skipping has been disabled since the task was emitted, or the fast-forward this
-// task was associated with has been superseded (different SourceEventId) or already fired
-// (HasReached=true). Dropping is harmless: the new fast-forward, if any, has its own wake-up task.
-func fastForwardTaskIsLive(mutableState historyi.MutableState, task *tasks.TimeSkippingTimerTask) bool {
+func checkIsFastForwardTaskValid(mutableState historyi.MutableState, task *tasks.TimeSkippingTimerTask) bool {
 	tsi := mutableState.GetExecutionInfo().GetTimeSkippingInfo()
 	if tsi == nil || !tsi.GetConfig().GetEnabled() {
 		return false
 	}
 	fastForward := tsi.GetFastForwardInfo()
-	if fastForward == nil || fastForward.GetTargetTime() == nil || fastForward.GetSourceEventId() == 0 || fastForward.GetHasReached() {
+	// A legitimately-applied fast-forward always has Stamp >= 1 (see applyFastForward), so Stamp == 0
+	// is a degenerate/uninitialized fast-forward and must never fire.
+	if fastForward == nil || fastForward.GetTargetTime() == nil || fastForward.GetStamp() == 0 || fastForward.GetHasReached() {
 		return false
 	}
-	return fastForward.GetSourceEventId() == task.EventID
+	return fastForward.GetStamp() == task.Stamp
 }
 
 func (t *timerQueueActiveTaskExecutor) updateWorkflowExecution(

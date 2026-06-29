@@ -9,10 +9,11 @@ import (
 func TestGetTimerTaskEventID_TimeSkippingTimerTask(t *testing.T) {
 	t.Parallel()
 
-	const eventID = int64(123)
-	task := &TimeSkippingTimerTask{EventID: eventID}
+	// Time-skipping tasks are validated via Stamp/Version, not an event ID, so they report
+	// no event ID (ok == false).
+	task := &TimeSkippingTimerTask{Stamp: 3}
 
 	gotEventID, ok := GetTimerTaskEventID(task)
-	require.True(t, ok)
-	require.Equal(t, eventID, gotEventID)
+	require.False(t, ok)
+	require.Equal(t, int64(0), gotEventID)
 }

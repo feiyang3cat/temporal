@@ -1048,6 +1048,18 @@ func (r *TaskGeneratorImpl) RegenerateTimerTasksForTimeSkipping() error {
 	// because time skipping pauses when there is in-flight work. Activity retry
 	// timers are the exception: an activity in retry backoff does not block skipping,
 	// so its retry timer must be re-stamped against the new accumulated skip (see (5)).
+	//
+	// NOTE: blocks (1)-(4) below construct their tasks inline rather than calling the
+	// canonical generators (GenerateUserTimerTasks, GenerateWorkflowStartTasks,
+	// GenerateDelayedWorkflowTasks). Those generators bundle creation-time gating and side
+	// effects regen must NOT replay — next-only emission plus a status-flag flip
+	// (CreateNextUserTimer), isFirstRun / feature-flag / timer-status gates
+	// (GenerateWorkflowStartTasks), and start-event-derived backoff type
+	// (GenerateDelayedWorkflowTasks) — while regen wants every pending timer re-stamped with
+	// re-derived values. So the task field sets are duplicated here and must be kept in sync
+	// with the structs by hand; only (5), activity retry, can reuse its canonical generator
+	// because its gating happens to match. TestTaskGeneratorImpl_RegenerateTimerTasksForTimeSkipping_AllFieldsPopulated
+	// guards against a struct field being added and forgotten in these inline blocks.
 
 	// (1) user timers — regenerate one task per pending user timer. User timers
 	// are only one of the task types that may need regeneration, so continue to
@@ -1098,7 +1110,8 @@ func (r *TaskGeneratorImpl) RegenerateTimerTasksForTimeSkipping() error {
 				// TaskID is set by shard
 				WorkflowKey:         r.mutableState.GetWorkflowKey(),
 				VisibilityTimestamp: fastForward.GetTargetTime().AsTime(),
-				EventID:             fastForward.GetSourceEventId(),
+				Version:             r.mutableState.GetCurrentVersion(),
+				Stamp:               fastForward.GetStamp(),
 			})
 		}
 	}

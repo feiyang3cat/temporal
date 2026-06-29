@@ -343,18 +343,21 @@ message TimeSkippingInfo {
 }
 
 message FastForwardInfo {
+  reserved 3;
+  reserved "source_event_id";
+
   // Target time for the fast-forward, expressed in virtual time.
   google.protobuf.Timestamp target_time = 1;
 
   // Indicates whether this fast-forward has already been reached, used for idempotency checks.
   bool has_reached = 2;
 
-  // Event ID of the WorkflowExecutionStartedEvent (always 1) or the most recent
-  // WorkflowExecutionOptionsUpdatedEvent that introduced the current time-skipping
-  // configuration. This is used as the task event ID for the time-skipping timer task,
-  // enabling reset and replication-conflict resolution to identify obsolete fast-forward tasks
-  // via the standard staleness check.
-  int64 source_event_id = 3;
+  // Monotonic counter bumped every time the fast-forward is (re)applied (i.e. whenever the
+  // TimeSkippingConfig is initialized or updated). Carried on the time-skipping timer task and
+  // compared at firing time: a task whose stamp does not match the current fast-forward's stamp
+  // has been superseded and is silently dropped. Event-free, so it works for both workflow and
+  // CHASM executions and survives failover (replicated, monotonic). Mirrors ActivityInfo.stamp.
+  int32 stamp = 4;
 }
 
 // Internal wrapper message to distinguish "never notified" (nil wrapper) from
