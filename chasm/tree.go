@@ -1,6 +1,7 @@
 package chasm
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -233,6 +234,12 @@ type (
 			requestID string,
 		) (nexusrpc.CompleteOperationOptions, error)
 		EndpointRegistry() EndpointRegistry
+		SetTimeSkippingConfig(config *commonpb.TimeSkippingConfig)
+		RecordTimeSkippingTransition(ctx context.Context, transition TimeSkippingTransition, archetype ArchetypeID) error
+	}
+
+	nowProvider interface {
+		Now() time.Time
 	}
 
 	// NodePathEncoder is an interface for encoding and decoding node paths.
@@ -414,6 +421,17 @@ func (n *Node) setValueState(state valueState) {
 	n.valueState = state
 	if state >= valueStateNeedSerialize {
 		n.isActiveStateDirty = true
+	}
+}
+
+func (n *Node) clearAncestorNodeValues(parent *Node) {
+	for node := parent; node != nil; node = node.parent {
+		if node.serializedNode == nil || !node.isComponent() || node.value == nil {
+			continue
+		}
+
+		node.setValue(nil)
+		node.setValueState(valueStateNeedDeserialize)
 	}
 }
 
@@ -704,7 +722,7 @@ func assertStructPointer(t reflect.Type) error {
 		return nil
 	}
 
-	if t.Kind() != reflect.Ptr || t.Elem().Kind() != reflect.Struct {
+	if t.Kind() != reflect.Pointer || t.Elem().Kind() != reflect.Struct {
 		return serviceerror.NewInternalf("only pointer to struct is supported for tree node value: got %s", t.String())
 	}
 	return nil
@@ -790,6 +808,13 @@ func (n *Node) setSerializedNode(
 	return childNode.setSerializedNode(nodePath[1:], encodedPath, serializedNode)
 }
 
+// hasNewTransactionSideEffects returns true when the transaction has observable
+// effects that must be persisted regardless of whether data bytes changed:
+// new tasks scheduled on this node, or lifecycle termination.
+func (n *Node) hasNewTransactionSideEffects() bool {
+	return len(n.newTasks[n.value]) > 0 || n.terminated
+}
+
 // serialize sets or updates serializedValue field of the node n with serialized value.
 // It sets node's valueState to valueStateSynced and updates LastUpdateVersionedTransition.
 func (n *Node) serialize() error {
@@ -807,6 +832,10 @@ func (n *Node) serialize() error {
 	}
 }
 
+// serializeComponentNode serializes the component node.
+// If this method is updated to modify serialized fields beyond Data and
+// LastUpdateVersionedTransition, the skip-if-clean revert logic in
+// closeTransactionSerializeNodes must be updated accordingly.
 func (n *Node) serializeComponentNode() error {
 	for field := range n.valueFields() {
 		if field.err != nil {
@@ -825,16 +854,28 @@ func (n *Node) serializeComponentNode() error {
 			}
 		}
 
-		rc, ok := n.registry.componentFor(n.value)
-		if !ok {
-			return softassert.UnexpectedInternalErr(
-				n.logger,
-				"component type is not registered",
-				fmt.Errorf("%s", reflect.TypeOf(n.value).String()))
+		n.serializedNode.Data = blob
+
+		if n.serializedNode.GetMetadata().GetLastUpdateVersionedTransition() == nil {
+			rc, ok := n.registry.componentFor(n.value)
+			if !ok {
+				return softassert.UnexpectedInternalErr(
+					n.logger,
+					"component type is not registered",
+					fmt.Errorf("%s", reflect.TypeOf(n.value).String()))
+			}
+			// TypeId mismatch on a brand new node indicates node reassignment.
+			existingTypeID := n.serializedNode.GetMetadata().GetComponentAttributes().GetTypeId()
+			if existingTypeID != 0 && existingTypeID != rc.componentID {
+				return softassert.UnexpectedInternalErr(
+					n.logger,
+					"component node TypeId changed on first serialization",
+					fmt.Errorf("existing: %d, new: %d", existingTypeID, rc.componentID),
+				)
+			}
+			n.serializedNode.GetMetadata().GetComponentAttributes().TypeId = rc.componentID
 		}
 
-		n.serializedNode.Data = blob
-		n.serializedNode.GetMetadata().GetComponentAttributes().TypeId = rc.componentID
 		n.updateLastUpdateVersionedTransition()
 		n.setValueState(valueStateSynced)
 
@@ -1168,6 +1209,10 @@ func (n *Node) deleteChildren(
 	return nil
 }
 
+// serializeDataNode serializes the data node.
+// If this method is updated to modify serialized fields beyond Data and
+// LastUpdateVersionedTransition, the skip-if-clean revert logic in
+// closeTransactionSerializeNodes must be updated accordingly.
 func (n *Node) serializeDataNode() error {
 	protoValue, ok := n.value.(proto.Message)
 	if !ok {
@@ -1188,6 +1233,10 @@ func (n *Node) serializeDataNode() error {
 	return nil
 }
 
+// serializeCollectionNode serializes the collection node.
+// If this method is updated to modify serialized fields beyond
+// LastUpdateVersionedTransition, the skip-if-clean revert logic in
+// closeTransactionSerializeNodes must be updated accordingly.
 func (n *Node) serializeCollectionNode() error {
 	// The collection node has no data; therefore, only metadata needs to be updated.
 	n.updateLastUpdateVersionedTransition()
@@ -1599,7 +1648,15 @@ func (n *Node) dataNodePath(
 func (n *Node) Now(
 	_ Component,
 ) time.Time {
+	// Delegate to the backend when it owns a (time-skipping-aware) clock so that CHASM and the rest
+	// of the execution share a single clock; mutable state's clock reflects the execution's
+	// time-skipping offset. Fall back to the tree's own timeSource for backends that don't provide
+	// one (e.g. bare test mocks).
+	//
 	// TODO: Now() could be different for components after we support Pause for CHASM components.
+	if np, ok := n.backend.(nowProvider); ok {
+		return np.Now()
+	}
 	return n.timeSource.Now()
 }
 
@@ -1619,7 +1676,7 @@ func (n *Node) AddTask(
 		return
 	}
 
-	n.nodeBase.newTasks[component] = append(n.nodeBase.newTasks[component], taskWithAttributes{
+	n.newTasks[component] = append(n.newTasks[component], taskWithAttributes{
 		task:       task,
 		attributes: taskAttributes,
 	})
@@ -1670,6 +1727,12 @@ func (n *Node) CloseTransaction() (NodesMutation, error) {
 	}
 
 	if err := n.closeTransactionApplyPendingComponentMetadata(); err != nil {
+		return NodesMutation{}, err
+	}
+
+	// time skippign should be called at the end of the transaction,
+	// so that all invalid tasks are deleted.
+	if err := n.closeTransactionHandleTimeSkipping(); err != nil {
 		return NodesMutation{}, err
 	}
 
@@ -1878,8 +1941,34 @@ func (n *Node) closeTransactionSerializeNodes() error {
 			continue
 		}
 
+		encodedPath, err := node.getEncodedPath()
+		if err != nil {
+			return err
+		}
+
+		// Skip writing nodes whose serialized content hasn't changed. A nil
+		// LastUpdateVersionedTransition means the node is brand new and must be written.
+		// prevData captures the pre-serialize blob pointer; serialize() allocates a new
+		// blob, leaving prevData pointing at the original for comparison.
+		prevVersionedTransition := common.CloneProto(
+			node.serializedNode.GetMetadata().GetLastUpdateVersionedTransition(),
+		)
+		skipIfClean := (node.isComponent() || node.isData() || node.isMap()) &&
+			prevVersionedTransition != nil &&
+			!node.hasNewTransactionSideEffects()
+		var prevData *commonpb.DataBlob
+		if skipIfClean {
+			prevData = node.serializedNode.Data
+		}
+
 		if err := node.serialize(); err != nil {
 			return err
+		}
+
+		// Data bytes unchanged: revert the versioned transition bump and skip persistence.
+		if skipIfClean && bytes.Equal(prevData.GetData(), node.serializedNode.Data.GetData()) {
+			node.serializedNode.GetMetadata().LastUpdateVersionedTransition = prevVersionedTransition
+			continue
 		}
 
 		if componentAttr := node.serializedNode.GetMetadata().GetComponentAttributes(); componentAttr != nil &&
@@ -1891,10 +1980,6 @@ func (n *Node) closeTransactionSerializeNodes() error {
 				fmt.Errorf("found at path %s", nodePath))
 		}
 
-		encodedPath, err := node.getEncodedPath()
-		if err != nil {
-			return err
-		}
 		n.mutation.UpdatedNodes[encodedPath] = node.serializedNode
 		// DeletedNodes map is populated when syncing tree structure. However, since we may sync tree structure
 		// multiple times in one transaction, if node at the same path was previously deleted, have structure synced,
@@ -2018,6 +2103,158 @@ func (n *Node) closeTransactionUpdateComponentTasks(
 		firstPureTaskNode,
 		archetypeID,
 	)
+}
+
+func (n *Node) closeTransactionHandleTimeSkipping() error {
+
+	// step1: time skipping only works on the root node
+	// todo@time-skipping: it seems CloseTransaction is only a method reasonable for the root node
+	// but currently the framework doesn't enforce this contract
+	if !softassert.That(n.logger, n.parent == nil, "closeTransactionHandleTimeSkipping must run on the root node") {
+		return nil
+	}
+	if n.ArchetypeID() == WorkflowArchetypeID {
+		// todo: remove after workflows get migrated to CHASM
+		return nil
+	}
+	tsi := n.backend.GetExecutionInfo().GetTimeSkippingInfo()
+	if !tsi.GetConfig().GetEnabled() {
+		return nil
+	}
+
+	// The chasm framework distinguishes active vs passive via isActiveStateDirty: it is set only for
+	// active-cluster user-data mutations and is never set by replication (ApplyMutation/ApplySnapshot)
+	// — see its declaration and the same "active cluster" gate in closeTransactionUpdateComponentTasks.
+	//
+	// NOTE: isActiveStateDirty tracks chasm component user-data changes only. It does NOT track
+	// TimeSkippingInfo changes — TimeSkippingInfo lives in mutable state's WorkflowExecutionInfo (not a
+	// chasm node) and is tracked separately by MutableStateImpl.timeSkippingInfoUpdated. That is fine
+	// here: the decision is driven by the component work that schedules a future task worth skipping to
+	// (which sets isActiveStateDirty), and the skip the decision records marks the TimeSkippingInfo
+	// dirty via its own flag. The one implication is that a transaction which only changes
+	// TimeSkippingInfo (e.g. SetTimeSkippingConfig) without touching chasm state won't trigger the
+	// decision; it is picked up on the next active transaction.
+	if !n.isActiveStateDirty {
+		// Passive cluster: the active cluster already made the time-skipping decision and replicated the
+		// resulting TimeSkippingInfo (including the new accumulatedSkippedDuration). We must NOT re-run
+		// the decision here — recording another skip on top of the replicated one would diverge from
+		// the active cluster.
+		//
+		// TODO(time-skipping/chasm): on the passive cluster, detect that the replicated
+		// accumulatedSkippedDuration changed since the physical timer tasks were last generated and, if
+		// so, re-stamp them via regenerateTasksForTimeSkipping (the same no-break CategoryTimer
+		// regeneration the active path uses) — comparing the current accumulatedSkippedDuration against
+		// a baseline captured at tree load and refreshed each CloseTransaction. Until then, passive
+		// timer tasks are only re-stamped on the full-refresh replication path (taskRefresher.Refresh ->
+		// ChasmTree().RefreshTasks()); the incremental path (PartialRefresh, a no-op for CHASM) leaves
+		// them stale. State-based time-skipping replication is currently out of scope.
+		return nil
+	}
+
+	// Active cluster: make and apply the time-skipping decision.
+	immutableContext := NewContext(context.Background(), n)
+	rootComponent, err := n.Component(immutableContext, ComponentRef{})
+	if err != nil {
+		return err
+	}
+	tsRoot, ok := rootComponent.(TimeSkippingRuntimeGate)
+	if !ok {
+		// todo: add a metric for alert in real implementation
+		n.logger.Error(
+			"root component does not implement TimeSkippingRuntimeGate when executions have turned on time skipping",
+			tag.Error(fmt.Errorf("type: %s", reflect.TypeOf(rootComponent).Name())))
+		return nil
+	}
+
+	// step2: bail unless the execution is idle.
+	if !tsRoot.IsExecutionSkippable(immutableContext) {
+		return nil
+	}
+
+	// step3: find the next skip target. A root component MAY implement TimeSkippingRuntimeTargetProvider
+	// to nominate the target itself; otherwise the framework scans the tree's timer tasks. Either way the
+	// framework owns the transition: it constructs it here, then applies the fast-forward budget and the
+	// validity gate below.
+	transition := NewTimeSkippingTransition(n.Now(nil))
+	// if provider, ok := rootComponent.(TimeSkippingRuntimeTargetProvider); ok {
+	// 	provider.FindNextTargetTime(immutableContext, transition)
+	// } else {
+	n.defaultFindNextTargetTime(transition)
+	// }
+	transition.GateByFastForward(tsi.GetFastForwardInfo())
+	if !transition.IsValid() {
+		return nil
+	}
+
+	// step4: record and regenerate
+	// todo: a bad design of current implementation is that RecordTimeSkippingTransition called regenerateChasmFastForwardWakeTask
+	// for chasm-based executions, and this is a special treatment. And we also need this special treatment for passive cluster.
+	// The reason is current chasm MutableContext.AddTask requires a component.
+	if err := n.backend.RecordTimeSkippingTransition(context.Background(), *transition, n.ArchetypeID()); err != nil {
+		return err
+	}
+	if err := n.regenerateChasmTasksForTimeSkipping(immutableContext); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (n *Node) defaultFindNextTargetTime(transition *TimeSkippingTransition) error {
+	now := transition.CurrentTime
+	for _, node := range n.andAllChildren() {
+		componentAttr := node.serializedNode.GetMetadata().GetComponentAttributes()
+		if componentAttr == nil {
+			continue
+		}
+		for _, taskList := range [][]*persistencespb.ChasmComponentAttributes_Task{
+			componentAttr.GetPureTasks(),
+			componentAttr.GetSideEffectTasks(),
+		} {
+			for _, task := range taskList {
+				if taskCategory(task) != tasks.CategoryTimer {
+					continue
+				}
+				scheduledTime := task.GetScheduledTime().AsTime()
+				if !scheduledTime.After(now) {
+					continue
+				}
+				transition.TrackEarliestFutureTime(scheduledTime)
+			}
+		}
+	}
+	return nil
+}
+
+func (n *Node) regenerateChasmTasksForTimeSkipping(ctx Context) error {
+	archetypeID := n.ArchetypeID()
+
+	var firstPureTask *persistencespb.ChasmComponentAttributes_Task
+	var firstPureTaskNode *Node
+
+	for nodePath, node := range n.andAllChildren() {
+		componentAttr := node.serializedNode.GetMetadata().GetComponentAttributes()
+		if componentAttr == nil {
+			continue
+		}
+
+		for _, sideEffectTask := range componentAttr.GetSideEffectTasks() {
+			if taskCategory(sideEffectTask) != tasks.CategoryTimer {
+				continue
+			}
+			sideEffectTask.PhysicalTaskStatus = physicalTaskStatusNone
+			node.closeTransactionGeneratePhysicalSideEffectTask(sideEffectTask, nodePath, archetypeID)
+		}
+
+		for _, pureTask := range componentAttr.GetPureTasks() {
+			pureTask.PhysicalTaskStatus = physicalTaskStatusNone
+			if firstPureTask == nil || comparePureTasks(pureTask, firstPureTask) < 0 {
+				firstPureTask = pureTask
+				firstPureTaskNode = node
+			}
+		}
+	}
+
+	return n.closeTransactionGeneratePhysicalPureTask(firstPureTask, firstPureTaskNode, archetypeID)
 }
 
 func (n *Node) deserializeComponentTask(
@@ -2562,9 +2799,11 @@ func (n *Node) applyDeletions(
 			continue
 		}
 
+		parent := node.parent
 		if err := node.delete(isSystemUpdates); err != nil {
 			return err
 		}
+		n.clearAncestorNodeValues(parent)
 	}
 
 	return nil
@@ -2585,6 +2824,7 @@ func (n *Node) applyUpdates(
 			// Node doesn't exist, we need to create it.
 			newNode := n.setSerializedNode(path, encodedPath, updatedNode)
 			newNode.resetTaskStatus()
+			n.clearAncestorNodeValues(newNode.parent)
 			if isSystemUpdates {
 				n.systemMutation.UpdatedNodes[encodedPath] = newNode.serializedNode
 				delete(n.systemMutation.DeletedNodes, encodedPath)
@@ -2626,9 +2866,7 @@ func (n *Node) applyUpdates(
 			node.setValue(nil)
 			node.setValueState(valueStateNeedDeserialize)
 			node.serializedNode = updatedNode
-
-			// Clearing decoded value for ancestor nodes is not necessary because the value field is not referenced directly.
-			// Parent node is pointing to the Node struct.
+			n.clearAncestorNodeValues(node.parent)
 		}
 	}
 
@@ -2754,6 +2992,8 @@ func (n *Node) delete(isSystemDelete bool) error {
 		return err
 	}
 
+	// Only record the deletion if the node was previously persisted.
+	//
 	// TODO: consider remove entries from UpdatedNodes map as well
 	// if the same node is updated and then deleted in the same transaction.
 	//
@@ -2764,10 +3004,12 @@ func (n *Node) delete(isSystemDelete bool) error {
 	// - For standby replication logic, mutable state calls ApplyMutation() twice,
 	//   first with a deletion only mutation for tombstone nodes, and then an
 	//   update only mutation.
-	if isSystemDelete {
-		n.systemMutation.DeletedNodes[encodedPath] = struct{}{}
-	} else {
-		n.mutation.DeletedNodes[encodedPath] = struct{}{}
+	if n.serializedNode.GetMetadata().GetLastUpdateVersionedTransition() != nil {
+		if isSystemDelete {
+			n.systemMutation.DeletedNodes[encodedPath] = struct{}{}
+		} else {
+			n.mutation.DeletedNodes[encodedPath] = struct{}{}
+		}
 	}
 
 	n.cleanupCachedTasks()
@@ -3138,7 +3380,7 @@ func deserializeTask(
 	}
 
 	taskGoType := registrableTask.goType
-	if taskGoType.Kind() == reflect.Ptr {
+	if taskGoType.Kind() == reflect.Pointer {
 		taskGoType = taskGoType.Elem()
 	}
 	taskValue = reflect.New(taskGoType)
@@ -3194,7 +3436,7 @@ func serializeTask(
 	taskGoType := registrableTask.goType
 
 	// Handle pointer to struct.
-	if taskGoType.Kind() == reflect.Ptr {
+	if taskGoType.Kind() == reflect.Pointer {
 		taskGoType = taskGoType.Elem()
 		taskValue = taskValue.Elem()
 	}
