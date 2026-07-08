@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	archiver "go.temporal.io/server/api/archiver/v1"
+	v1 "go.temporal.io/server/api/archiver/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -71,10 +71,10 @@ func (mr *MockHistoryIteratorMockRecorder) HasNext() *gomock.Call {
 }
 
 // Next mocks base method.
-func (m *MockHistoryIterator) Next(arg0 context.Context) (*archiver.HistoryBlob, error) {
+func (m *MockHistoryIterator) Next(arg0 context.Context) (*v1.HistoryBlob, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Next", arg0)
-	ret0, _ := ret[0].(*archiver.HistoryBlob)
+	ret0, _ := ret[0].(*v1.HistoryBlob)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

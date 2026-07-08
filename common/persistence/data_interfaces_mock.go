@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	persistence "go.temporal.io/server/api/persistence/v1"
+	v1 "go.temporal.io/server/api/persistence/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -1306,10 +1306,10 @@ func (mr *MockNexusEndpointManagerMockRecorder) GetName() *gomock.Call {
 }
 
 // GetNexusEndpoint mocks base method.
-func (m *MockNexusEndpointManager) GetNexusEndpoint(ctx context.Context, request *GetNexusEndpointRequest) (*persistence.NexusEndpointEntry, error) {
+func (m *MockNexusEndpointManager) GetNexusEndpoint(ctx context.Context, request *GetNexusEndpointRequest) (*v1.NexusEndpointEntry, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetNexusEndpoint", ctx, request)
-	ret0, _ := ret[0].(*persistence.NexusEndpointEntry)
+	ret0, _ := ret[0].(*v1.NexusEndpointEntry)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

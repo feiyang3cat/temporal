@@ -29,6 +29,7 @@ type MockContext struct {
 	HandleExecutionCloseTime   func() time.Time
 	HandleStateTransitionCount func() int64
 	HandleExecutionInfo        func() ExecutionInfo
+	HandleGetExecutionInfo     func() *persistencespb.WorkflowExecutionInfo
 	HandleLibrary              func(name string) (Library, bool)
 	HandleNamespaceEntry       func() *namespace.Namespace
 	HandleEndpointByName       func(string) (*persistencespb.NexusEndpointEntry, error)
@@ -112,6 +113,13 @@ func (c *MockContext) ExecutionInfo() ExecutionInfo {
 		return c.HandleExecutionInfo()
 	}
 	return ExecutionInfo{}
+}
+
+func (c *MockContext) GetExecutionInfo() *persistencespb.WorkflowExecutionInfo {
+	if c.HandleGetExecutionInfo != nil {
+		return c.HandleGetExecutionInfo()
+	}
+	return nil
 }
 
 func (c *MockContext) NamespaceEntry() *namespace.Namespace {

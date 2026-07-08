@@ -77,20 +77,29 @@ func (ms *MutableStateImpl) applyFastForward(currentEventID int64, propagatedTar
 		return
 	}
 
+	// createTime is the virtual (time-skipping) clock at the moment the fast-forward
+	// is installed; createTimeReal is its wall-clock equivalent. Both come straight
+	// from mutable state, not from any history event, so they hold for event-less
+	// executions (e.g. CHASM).
+	createTime := ms.Now()
+	createTimeReal := ms.ToRealTime(createTime)
+
 	var targetTime time.Time
 	if propagatedTargetTime != nil {
 		targetTime = propagatedTargetTime.AsTime()
 	} else {
 		// if there is no propagated target time,
 		// fast-forward refers to a new duration from now.
-		targetTime = ms.Now().Add(tsc.GetFastForward().AsDuration())
+		targetTime = createTime.Add(tsc.GetFastForward().AsDuration())
 	}
 
 	// always install a fresh fast-forward bound
 	tsi.FastForwardInfo = &persistencespb.FastForwardInfo{
-		TargetTime:    timestamppb.New(targetTime),
-		SourceEventId: currentEventID,
-		HasReached:    false,
+		TargetTime:     timestamppb.New(targetTime),
+		SourceEventId:  currentEventID,
+		HasReached:     false,
+		CreateTime:     timestamppb.New(createTime),
+		CreateTimeReal: timestamppb.New(createTimeReal),
 	}
 	ms.AddTasks(&tasks.TimeSkippingTimerTask{
 		WorkflowKey:         ms.GetWorkflowKey(),
@@ -467,6 +476,57 @@ func (ms *MutableStateImpl) ApplyWorkflowExecutionTimeSkippingTransitionedEvent(
 
 	ms.timeSkippingInfoUpdated = true
 	return nil
+}
+
+// PollForExecutionFastForward reports the current time-skipping fast-forward state
+// of the workflow so a long-poll handler can decide whether to return now or keep
+// waiting.
+//
+// It never blocks. Mutable state is read under the workflow lock, so the actual
+// waiting until the deadline is the caller's responsibility. Completion is derived
+// entirely from mutable state — the persisted HasReached flag OR the clock check
+// ms.Now() >= TargetTime — so it does not depend on history events and is valid
+// for event-less executions (e.g. CHASM).
+//
+// The returned FastForwardInfo is a defensive copy of the current state, or nil
+// when time skipping has no pending fast-forward. It carries the three timestamps
+// (CreateTime, CreateTimeReal, TargetTime) plus HasReached. done reports whether
+// the poll condition is satisfied:
+//   - waitForCompletion == false: done is always true — return the current
+//     snapshot immediately.
+//   - waitForCompletion == true: done is true once the fast-forward has been
+//     reached, or there is no pending fast-forward to wait for, or the workflow is
+//     no longer running (a closed workflow can never reach a pending fast-forward).
+func (ms *MutableStateImpl) PollForExecutionFastForward(
+	waitForCompletion bool,
+) (*persistencespb.FastForwardInfo, bool) {
+	ff := ms.executionInfo.GetTimeSkippingInfo().GetFastForwardInfo()
+
+	// Defensive copy so neither the caller nor the RPC response can mutate mutable state.
+	var ffCopy *persistencespb.FastForwardInfo
+	if ff != nil {
+		ffCopy = common.CloneProto(ff)
+		// A fast-forward counts as reached either once HasReached has been
+		// persisted (by the time-skipping timer task or a direct CHASM-node write)
+		// or, derived purely from the clock, once virtual time has caught up to the
+		// target. Computing completion from ms.Now() means it is observable without
+		// any history event, so this holds for event-less executions (e.g. CHASM).
+		// The flag is set on the copy only; mutable state is not mutated here.
+		if !ffCopy.GetHasReached() &&
+			ffCopy.GetTargetTime() != nil &&
+			!ms.Now().Before(ffCopy.GetTargetTime().AsTime()) {
+			ffCopy.HasReached = true
+		}
+	}
+
+	if !waitForCompletion {
+		return ffCopy, true
+	}
+
+	// A pending fast-forward is one with a target that has not yet been reached.
+	pending := ffCopy.GetTargetTime() != nil && !ffCopy.GetHasReached()
+	done := !pending || !ms.IsWorkflowExecutionRunning()
+	return ffCopy, done
 }
 
 func (ms *MutableStateImpl) closeTransactionRegenTimerTasksForWorkflowTimeSkipping(

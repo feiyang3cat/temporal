@@ -28,6 +28,12 @@ type Context interface {
 	ExecutionKey() ExecutionKey
 	// ExecutionInfo returns metadata information about the execution.
 	ExecutionInfo() ExecutionInfo
+	// GetExecutionInfo returns the execution's full persisted WorkflowExecutionInfo
+	// from mutable state. It is available for any execution backed by mutable state,
+	// regardless of archetype. Prefer ExecutionInfo() for the curated metadata view;
+	// this raw accessor exists for framework-level fields not surfaced there (e.g.
+	// time-skipping's TimeSkippingInfo/FastForwardInfo).
+	GetExecutionInfo() *persistencespb.WorkflowExecutionInfo
 	// Logger returns a logger tagged with execution key and other chasm framework internal information.
 	Logger() log.Logger
 	// NamespaceEntry returns the namespace entry for the execution.
@@ -194,6 +200,10 @@ func (c *immutableCtx) ExecutionInfo() ExecutionInfo {
 		ApproximateStateSize: c.root.backend.GetApproximatePersistedSize(),
 		CloseTime:            closeTime,
 	}
+}
+
+func (c *immutableCtx) GetExecutionInfo() *persistencespb.WorkflowExecutionInfo {
+	return c.root.backend.GetExecutionInfo()
 }
 
 func (c *immutableCtx) Logger() log.Logger {

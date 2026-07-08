@@ -426,5 +426,10 @@ type (
 		AddWorkflowExecutionTimeSkippingTransitionedEvent(
 			ctx context.Context, targetTime time.Time, disabledAfterFastForward bool) (*historypb.HistoryEvent, error)
 		ApplyWorkflowExecutionTimeSkippingTransitionedEvent(ctx context.Context, event *historypb.HistoryEvent) error
+		// PollForExecutionFastForward reports the current time-skipping fast-forward
+		// state so a long-poll handler can decide whether to return or keep waiting.
+		// It never blocks; the caller owns the wait loop (see the doc comment on the
+		// implementation for the meaning of waitForCompletion and the returned bool).
+		PollForExecutionFastForward(waitForCompletion bool) (*persistencespb.FastForwardInfo, bool)
 	}
 )

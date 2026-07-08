@@ -13,7 +13,7 @@ import (
 	reflect "reflect"
 	time "time"
 
-	persistence "go.temporal.io/server/api/persistence/v1"
+	v1 "go.temporal.io/server/api/persistence/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,7 +42,7 @@ func (m *MockHistoryBranchUtil) EXPECT() *MockHistoryBranchUtilMockRecorder {
 }
 
 // NewHistoryBranch mocks base method.
-func (m *MockHistoryBranchUtil) NewHistoryBranch(namespaceID, workflowID, runID, treeID string, branchID *string, ancestors []*persistence.HistoryBranchRange, runTimeout, executionTimeout, retentionDuration time.Duration) ([]byte, error) {
+func (m *MockHistoryBranchUtil) NewHistoryBranch(namespaceID, workflowID, runID, treeID string, branchID *string, ancestors []*v1.HistoryBranchRange, runTimeout, executionTimeout, retentionDuration time.Duration) ([]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NewHistoryBranch", namespaceID, workflowID, runID, treeID, branchID, ancestors, runTimeout, executionTimeout, retentionDuration)
 	ret0, _ := ret[0].([]byte)
@@ -57,10 +57,10 @@ func (mr *MockHistoryBranchUtilMockRecorder) NewHistoryBranch(namespaceID, workf
 }
 
 // ParseHistoryBranchInfo mocks base method.
-func (m *MockHistoryBranchUtil) ParseHistoryBranchInfo(branchToken []byte) (*persistence.HistoryBranch, error) {
+func (m *MockHistoryBranchUtil) ParseHistoryBranchInfo(branchToken []byte) (*v1.HistoryBranch, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ParseHistoryBranchInfo", branchToken)
-	ret0, _ := ret[0].(*persistence.HistoryBranch)
+	ret0, _ := ret[0].(*v1.HistoryBranch)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -72,7 +72,7 @@ func (mr *MockHistoryBranchUtilMockRecorder) ParseHistoryBranchInfo(branchToken 
 }
 
 // UpdateHistoryBranchInfo mocks base method.
-func (m *MockHistoryBranchUtil) UpdateHistoryBranchInfo(branchToken []byte, branchInfo *persistence.HistoryBranch, runID string) ([]byte, error) {
+func (m *MockHistoryBranchUtil) UpdateHistoryBranchInfo(branchToken []byte, branchInfo *v1.HistoryBranch, runID string) ([]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateHistoryBranchInfo", branchToken, branchInfo, runID)
 	ret0, _ := ret[0].([]byte)

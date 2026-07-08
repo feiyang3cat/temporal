@@ -905,6 +905,20 @@ func (c *metricClient) PollNexusTaskQueue(
 	return c.client.PollNexusTaskQueue(ctx, request, opts...)
 }
 
+func (c *metricClient) PollTimeSkippingFastForwardCompletion(
+	ctx context.Context,
+	request *workflowservice.PollTimeSkippingFastForwardCompletionRequest,
+	opts ...grpc.CallOption,
+) (_ *workflowservice.PollTimeSkippingFastForwardCompletionResponse, retError error) {
+
+	metricsHandler, startTime := c.startMetricsRecording(ctx, "FrontendClientPollTimeSkippingFastForwardCompletion")
+	defer func() {
+		c.finishMetricsRecording(metricsHandler, startTime, retError)
+	}()
+
+	return c.client.PollTimeSkippingFastForwardCompletion(ctx, request, opts...)
+}
+
 func (c *metricClient) PollWorkflowExecutionUpdate(
 	ctx context.Context,
 	request *workflowservice.PollWorkflowExecutionUpdateRequest,

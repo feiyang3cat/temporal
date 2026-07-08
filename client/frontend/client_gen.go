@@ -649,6 +649,16 @@ func (c *clientImpl) PollNexusTaskQueue(
 	return c.client.PollNexusTaskQueue(ctx, request, opts...)
 }
 
+func (c *clientImpl) PollTimeSkippingFastForwardCompletion(
+	ctx context.Context,
+	request *workflowservice.PollTimeSkippingFastForwardCompletionRequest,
+	opts ...grpc.CallOption,
+) (*workflowservice.PollTimeSkippingFastForwardCompletionResponse, error) {
+	ctx, cancel := c.createContext(ctx)
+	defer cancel()
+	return c.client.PollTimeSkippingFastForwardCompletion(ctx, request, opts...)
+}
+
 func (c *clientImpl) PollWorkflowExecutionUpdate(
 	ctx context.Context,
 	request *workflowservice.PollWorkflowExecutionUpdateRequest,

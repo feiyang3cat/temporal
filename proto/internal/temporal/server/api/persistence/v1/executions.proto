@@ -355,6 +355,17 @@ message FastForwardInfo {
   // enabling reset and replication-conflict resolution to identify obsolete fast-forward tasks
   // via the standard staleness check.
   int64 source_event_id = 3;
+
+  // Virtual (time-skipping) time at which this fast-forward was created, i.e. the
+  // mutable state's virtual clock when the user set the fast-forward. Recorded
+  // directly from mutable state rather than derived from any history event, so it
+  // is valid for executions that have no events (e.g. CHASM).
+  google.protobuf.Timestamp create_time = 4;
+
+  // Wall-clock (real) time corresponding to create_time, i.e. virtual create_time
+  // minus the accumulated skipped duration at creation. Like create_time, it is
+  // recorded directly from mutable state and does not depend on history events.
+  google.protobuf.Timestamp create_time_real = 5;
 }
 
 // Internal wrapper message to distinguish "never notified" (nil wrapper) from

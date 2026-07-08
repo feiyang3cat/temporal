@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	archiver "go.temporal.io/server/api/archiver/v1"
+	v1 "go.temporal.io/server/api/archiver/v1"
 	searchattribute "go.temporal.io/server/common/searchattribute"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -115,7 +115,7 @@ func (m *MockVisibilityArchiver) EXPECT() *MockVisibilityArchiverMockRecorder {
 }
 
 // Archive mocks base method.
-func (m *MockVisibilityArchiver) Archive(ctx context.Context, uri URI, request *archiver.VisibilityRecord, opts ...ArchiveOption) error {
+func (m *MockVisibilityArchiver) Archive(ctx context.Context, uri URI, request *v1.VisibilityRecord, opts ...ArchiveOption) error {
 	m.ctrl.T.Helper()
 	varargs := []any{ctx, uri, request}
 	for _, a := range opts {

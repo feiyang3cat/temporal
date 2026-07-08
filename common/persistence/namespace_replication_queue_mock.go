@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	repication "go.temporal.io/server/api/replication/v1"
+	v1 "go.temporal.io/server/api/replication/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -112,10 +112,10 @@ func (mr *MockNamespaceReplicationQueueMockRecorder) GetDLQAckLevel(ctx any) *go
 }
 
 // GetMessagesFromDLQ mocks base method.
-func (m *MockNamespaceReplicationQueue) GetMessagesFromDLQ(ctx context.Context, firstMessageID, lastMessageID int64, pageSize int, pageToken []byte) ([]*repication.ReplicationTask, []byte, error) {
+func (m *MockNamespaceReplicationQueue) GetMessagesFromDLQ(ctx context.Context, firstMessageID, lastMessageID int64, pageSize int, pageToken []byte) ([]*v1.ReplicationTask, []byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetMessagesFromDLQ", ctx, firstMessageID, lastMessageID, pageSize, pageToken)
-	ret0, _ := ret[0].([]*repication.ReplicationTask)
+	ret0, _ := ret[0].([]*v1.ReplicationTask)
 	ret1, _ := ret[1].([]byte)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -128,10 +128,10 @@ func (mr *MockNamespaceReplicationQueueMockRecorder) GetMessagesFromDLQ(ctx, fir
 }
 
 // GetReplicationMessages mocks base method.
-func (m *MockNamespaceReplicationQueue) GetReplicationMessages(ctx context.Context, lastMessageID int64, maxCount int) ([]*repication.ReplicationTask, int64, error) {
+func (m *MockNamespaceReplicationQueue) GetReplicationMessages(ctx context.Context, lastMessageID int64, maxCount int) ([]*v1.ReplicationTask, int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetReplicationMessages", ctx, lastMessageID, maxCount)
-	ret0, _ := ret[0].([]*repication.ReplicationTask)
+	ret0, _ := ret[0].([]*v1.ReplicationTask)
 	ret1, _ := ret[1].(int64)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
@@ -144,7 +144,7 @@ func (mr *MockNamespaceReplicationQueueMockRecorder) GetReplicationMessages(ctx,
 }
 
 // Publish mocks base method.
-func (m *MockNamespaceReplicationQueue) Publish(ctx context.Context, task *repication.ReplicationTask) error {
+func (m *MockNamespaceReplicationQueue) Publish(ctx context.Context, task *v1.ReplicationTask) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Publish", ctx, task)
 	ret0, _ := ret[0].(error)
@@ -158,7 +158,7 @@ func (mr *MockNamespaceReplicationQueueMockRecorder) Publish(ctx, task any) *gom
 }
 
 // PublishToDLQ mocks base method.
-func (m *MockNamespaceReplicationQueue) PublishToDLQ(ctx context.Context, task *repication.ReplicationTask) error {
+func (m *MockNamespaceReplicationQueue) PublishToDLQ(ctx context.Context, task *v1.ReplicationTask) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "PublishToDLQ", ctx, task)
 	ret0, _ := ret[0].(error)

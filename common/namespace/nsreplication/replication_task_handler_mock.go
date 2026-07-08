@@ -13,7 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
-	repication "go.temporal.io/server/api/replication/v1"
+	v1 "go.temporal.io/server/api/replication/v1"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,7 +42,7 @@ func (m *MockTaskExecutor) EXPECT() *MockTaskExecutorMockRecorder {
 }
 
 // Execute mocks base method.
-func (m *MockTaskExecutor) Execute(ctx context.Context, task *repication.NamespaceTaskAttributes) error {
+func (m *MockTaskExecutor) Execute(ctx context.Context, task *v1.NamespaceTaskAttributes) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Execute", ctx, task)
 	ret0, _ := ret[0].(error)

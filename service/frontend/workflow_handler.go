@@ -5422,6 +5422,29 @@ func (wh *WorkflowHandler) PollWorkflowExecutionUpdate(
 	return histResp.GetResponse(), nil
 }
 
+// PollTimeSkippingFastForwardCompletion long-polls until the targeted execution's
+// time-skipping fast-forward has completed, returning its create/target times.
+//
+// TODO(time-skipping): implement the dispatch — by request.GetArchetype():
+//   - workflow archetype (chasm.WorkflowArchetypeID): history WatchHistoryEvent
+//     wait mechanism via historyClient;
+//   - CHASM archetypes: chasm.PollComponent.
+//
+// Both branches return the fast-forward create_time/create_time_real/target_time
+// once reached, and an empty successful response on server-side long-poll timeout.
+func (wh *WorkflowHandler) PollTimeSkippingFastForwardCompletion(
+	ctx context.Context,
+	request *workflowservice.PollTimeSkippingFastForwardCompletionRequest,
+) (_ *workflowservice.PollTimeSkippingFastForwardCompletionResponse, retError error) {
+	defer log.CapturePanic(wh.logger, &retError)
+
+	if request == nil {
+		return nil, errRequestNotSet
+	}
+
+	return nil, serviceerror.NewUnimplemented("PollTimeSkippingFastForwardCompletion is not yet implemented")
+}
+
 func (wh *WorkflowHandler) UpdateWorkerBuildIdCompatibility(ctx context.Context, request *workflowservice.UpdateWorkerBuildIdCompatibilityRequest) (_ *workflowservice.UpdateWorkerBuildIdCompatibilityResponse, retError error) {
 	defer log.CapturePanic(wh.logger, &retError)
 
