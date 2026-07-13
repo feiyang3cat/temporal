@@ -479,6 +479,26 @@ func (c *clientImpl) GetWorkflowExecutionRawHistoryV2(
 	return response, nil
 }
 
+func (c *clientImpl) GetWorkflowTimeSkipping(
+	ctx context.Context,
+	request *historyservice.GetWorkflowTimeSkippingRequest,
+	opts ...grpc.CallOption,
+) (*historyservice.GetWorkflowTimeSkippingResponse, error) {
+	shardID := c.shardIDFromWorkflowID(request.GetNamespaceId(), request.GetRequest().GetWorkflowExecution().GetWorkflowId())
+	var response *historyservice.GetWorkflowTimeSkippingResponse
+	op := func(ctx context.Context, client historyservice.HistoryServiceClient) error {
+		var err error
+		ctx, cancel := c.createContext(ctx)
+		defer cancel()
+		response, err = client.GetWorkflowTimeSkipping(ctx, request, opts...)
+		return err
+	}
+	if err := c.executeWithRedirect(ctx, shardID, op); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
 func (c *clientImpl) ImportWorkflowExecution(
 	ctx context.Context,
 	request *historyservice.ImportWorkflowExecutionRequest,

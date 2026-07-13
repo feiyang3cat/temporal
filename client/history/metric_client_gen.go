@@ -373,6 +373,20 @@ func (c *metricClient) GetWorkflowExecutionRawHistoryV2(
 	return c.client.GetWorkflowExecutionRawHistoryV2(ctx, request, opts...)
 }
 
+func (c *metricClient) GetWorkflowTimeSkipping(
+	ctx context.Context,
+	request *historyservice.GetWorkflowTimeSkippingRequest,
+	opts ...grpc.CallOption,
+) (_ *historyservice.GetWorkflowTimeSkippingResponse, retError error) {
+
+	metricsHandler, startTime := c.startMetricsRecording(ctx, "HistoryClientGetWorkflowTimeSkipping")
+	defer func() {
+		c.finishMetricsRecording(metricsHandler, startTime, retError)
+	}()
+
+	return c.client.GetWorkflowTimeSkipping(ctx, request, opts...)
+}
+
 func (c *metricClient) ImportWorkflowExecution(
 	ctx context.Context,
 	request *historyservice.ImportWorkflowExecutionRequest,

@@ -7315,6 +7315,33 @@ func (wh *WorkflowHandler) UpdateActivityExecutionOptions(context.Context, *work
 	return nil, serviceerror.NewUnimplemented("UpdateActivityExecutionOptions not implemented")
 }
 
-func (wh *WorkflowHandler) GetWorkflowTimeSkipping(context.Context, *workflowservice.GetWorkflowTimeSkippingRequest) (*workflowservice.GetWorkflowTimeSkippingResponse, error) {
-	return nil, serviceerror.NewUnimplemented("GetWorkflowTimeSkipping not implemented")
+func (wh *WorkflowHandler) GetWorkflowTimeSkipping(ctx context.Context, request *workflowservice.GetWorkflowTimeSkippingRequest) (_ *workflowservice.GetWorkflowTimeSkippingResponse, retError error) {
+	defer log.CapturePanic(wh.logger, &retError)
+
+	if request == nil {
+		return nil, errRequestNotSet
+	}
+
+	if request.GetNamespace() == "" {
+		return nil, errNamespaceNotSet
+	}
+
+	if err := validateExecution(request.GetWorkflowExecution()); err != nil {
+		return nil, err
+	}
+
+	namespaceID, err := wh.namespaceRegistry.GetNamespaceID(namespace.Name(request.GetNamespace()))
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := wh.historyClient.GetWorkflowTimeSkipping(ctx, &historyservice.GetWorkflowTimeSkippingRequest{
+		NamespaceId: namespaceID.String(),
+		Request:     request,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return response.GetResponse(), nil
 }

@@ -339,6 +339,21 @@ func (mr *MockEngineMockRecorder) GetWorkflowExecutionRawHistoryV2(ctx, request 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowExecutionRawHistoryV2", reflect.TypeOf((*MockEngine)(nil).GetWorkflowExecutionRawHistoryV2), ctx, request)
 }
 
+// GetWorkflowTimeSkipping mocks base method.
+func (m *MockEngine) GetWorkflowTimeSkipping(ctx context.Context, request *historyservice.GetWorkflowTimeSkippingRequest) (*historyservice.GetWorkflowTimeSkippingResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetWorkflowTimeSkipping", ctx, request)
+	ret0, _ := ret[0].(*historyservice.GetWorkflowTimeSkippingResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetWorkflowTimeSkipping indicates an expected call of GetWorkflowTimeSkipping.
+func (mr *MockEngineMockRecorder) GetWorkflowTimeSkipping(ctx, request any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetWorkflowTimeSkipping", reflect.TypeOf((*MockEngine)(nil).GetWorkflowTimeSkipping), ctx, request)
+}
+
 // ImportWorkflowExecution mocks base method.
 func (m *MockEngine) ImportWorkflowExecution(ctx context.Context, request *historyservice.ImportWorkflowExecutionRequest) (*historyservice.ImportWorkflowExecutionResponse, error) {
 	m.ctrl.T.Helper()

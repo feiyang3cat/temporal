@@ -220,6 +220,11 @@ service HistoryService {
     option (temporal.server.api.common.v1.api_category).category = API_CATEGORY_STANDARD;
   }
 
+  // GetWorkflowTimeSkipping returns the current virtual time and fast-forward state of the specified workflow execution.
+  rpc GetWorkflowTimeSkipping(GetWorkflowTimeSkippingRequest) returns (GetWorkflowTimeSkippingResponse) {
+    option (temporal.server.api.common.v1.api_category).category = API_CATEGORY_STANDARD;
+  }
+
   // ReplicateEventsV2 replicates workflow history events
   rpc ReplicateEventsV2(ReplicateEventsV2Request) returns (ReplicateEventsV2Response) {
     option (temporal.server.api.common.v1.api_category).category = API_CATEGORY_STANDARD;

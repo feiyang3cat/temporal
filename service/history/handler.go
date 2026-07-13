@@ -934,6 +934,30 @@ func (h *Handler) DescribeWorkflowExecution(ctx context.Context, request *histor
 	return resp, nil
 }
 
+// GetWorkflowTimeSkipping returns the current virtual time and fast-forward state of the workflow execution.
+func (h *Handler) GetWorkflowTimeSkipping(ctx context.Context, request *historyservice.GetWorkflowTimeSkippingRequest) (*historyservice.GetWorkflowTimeSkippingResponse, error) {
+	namespaceID := namespace.ID(request.GetNamespaceId())
+	if namespaceID == "" {
+		return nil, h.convertError(errNamespaceNotSet)
+	}
+
+	workflowID := request.GetRequest().GetWorkflowExecution().GetWorkflowId()
+	shardContext, err := h.controller.GetShardByNamespaceWorkflow(namespaceID, workflowID)
+	if err != nil {
+		return nil, h.convertError(err)
+	}
+	engine, err := shardContext.GetEngine(ctx)
+	if err != nil {
+		return nil, h.convertError(err)
+	}
+
+	resp, err := engine.GetWorkflowTimeSkipping(ctx, request)
+	if err != nil {
+		return nil, h.convertError(err)
+	}
+	return resp, nil
+}
+
 // RequestCancelWorkflowExecution - requests cancellation of a workflow
 func (h *Handler) RequestCancelWorkflowExecution(ctx context.Context, request *historyservice.RequestCancelWorkflowExecutionRequest) (*historyservice.RequestCancelWorkflowExecutionResponse, error) {
 	namespaceID := namespace.ID(request.GetNamespaceId())
