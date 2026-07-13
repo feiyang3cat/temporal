@@ -201,6 +201,13 @@ func (wt *WorkflowTags) extractFromWorkflowServiceServerMessage(message any) []t
 		}
 	case *workflowservice.GetWorkflowExecutionHistoryReverseResponse:
 		return nil
+	case *workflowservice.GetWorkflowTimeSkippingRequest:
+		return []tag.Tag{
+			tag.WorkflowID(r.GetWorkflowExecution().GetWorkflowId()),
+			tag.WorkflowRunID(r.GetWorkflowExecution().GetRunId()),
+		}
+	case *workflowservice.GetWorkflowTimeSkippingResponse:
+		return nil
 	case *workflowservice.ListActivityExecutionsRequest:
 		return nil
 	case *workflowservice.ListActivityExecutionsResponse:

@@ -626,6 +626,21 @@ func (c *retryableClient) GetWorkflowExecutionHistoryReverse(
 	return resp, err
 }
 
+func (c *retryableClient) GetWorkflowTimeSkipping(
+	ctx context.Context,
+	request *workflowservice.GetWorkflowTimeSkippingRequest,
+	opts ...grpc.CallOption,
+) (*workflowservice.GetWorkflowTimeSkippingResponse, error) {
+	var resp *workflowservice.GetWorkflowTimeSkippingResponse
+	op := func(ctx context.Context) error {
+		var err error
+		resp, err = c.client.GetWorkflowTimeSkipping(ctx, request, opts...)
+		return err
+	}
+	err := backoff.ThrottleRetryContext(ctx, op, c.policy, c.isRetryable)
+	return resp, err
+}
+
 func (c *retryableClient) ListActivityExecutions(
 	ctx context.Context,
 	request *workflowservice.ListActivityExecutionsRequest,

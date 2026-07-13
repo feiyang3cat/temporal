@@ -419,6 +419,16 @@ func (c *clientImpl) GetWorkflowExecutionHistoryReverse(
 	return c.client.GetWorkflowExecutionHistoryReverse(ctx, request, opts...)
 }
 
+func (c *clientImpl) GetWorkflowTimeSkipping(
+	ctx context.Context,
+	request *workflowservice.GetWorkflowTimeSkippingRequest,
+	opts ...grpc.CallOption,
+) (*workflowservice.GetWorkflowTimeSkippingResponse, error) {
+	ctx, cancel := c.createContext(ctx)
+	defer cancel()
+	return c.client.GetWorkflowTimeSkipping(ctx, request, opts...)
+}
+
 func (c *clientImpl) ListActivityExecutions(
 	ctx context.Context,
 	request *workflowservice.ListActivityExecutionsRequest,

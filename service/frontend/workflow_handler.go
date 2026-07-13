@@ -7314,3 +7314,7 @@ func (wh *WorkflowHandler) UnpauseActivityExecution(context.Context, *workflowse
 func (wh *WorkflowHandler) UpdateActivityExecutionOptions(context.Context, *workflowservice.UpdateActivityExecutionOptionsRequest) (*workflowservice.UpdateActivityExecutionOptionsResponse, error) {
 	return nil, serviceerror.NewUnimplemented("UpdateActivityExecutionOptions not implemented")
 }
+
+func (wh *WorkflowHandler) GetWorkflowTimeSkipping(context.Context, *workflowservice.GetWorkflowTimeSkippingRequest) (*workflowservice.GetWorkflowTimeSkippingResponse, error) {
+	return nil, serviceerror.NewUnimplemented("GetWorkflowTimeSkipping not implemented")
+}

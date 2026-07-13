@@ -583,6 +583,20 @@ func (c *metricClient) GetWorkflowExecutionHistoryReverse(
 	return c.client.GetWorkflowExecutionHistoryReverse(ctx, request, opts...)
 }
 
+func (c *metricClient) GetWorkflowTimeSkipping(
+	ctx context.Context,
+	request *workflowservice.GetWorkflowTimeSkippingRequest,
+	opts ...grpc.CallOption,
+) (_ *workflowservice.GetWorkflowTimeSkippingResponse, retError error) {
+
+	metricsHandler, startTime := c.startMetricsRecording(ctx, "FrontendClientGetWorkflowTimeSkipping")
+	defer func() {
+		c.finishMetricsRecording(metricsHandler, startTime, retError)
+	}()
+
+	return c.client.GetWorkflowTimeSkipping(ctx, request, opts...)
+}
+
 func (c *metricClient) ListActivityExecutions(
 	ctx context.Context,
 	request *workflowservice.ListActivityExecutionsRequest,
