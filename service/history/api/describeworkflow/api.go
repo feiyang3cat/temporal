@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/sony/gobreaker"
@@ -47,6 +48,10 @@ var (
 	errNexusOperationStateUnspecified = errors.New("Nexus operation with UNSPECIFIED state")
 )
 
+// describeWaitRefreshBuffer is reserved from the request deadline so that, when a WaitTimeskippingCompletion
+// wait times out, there is still budget to re-read the current virtual time before returning.
+const describeWaitRefreshBuffer = time.Second
+
 func clonePayloadMap(source map[string]*commonpb.Payload) map[string]*commonpb.Payload {
 	target := make(map[string]*commonpb.Payload, len(source))
 	for k, v := range source {
@@ -60,32 +65,60 @@ func clonePayloadMap(source map[string]*commonpb.Payload) map[string]*commonpb.P
 	return target
 }
 
-// makeTimeSkippingInfo converts the persisted time-skipping state into the
-// public common.v1.TimeSkippingInfo. CurrentTime is the execution's virtual
-// clock; IsRunning tracks the config's enabled flag, which the server clears
-// once a fast-forward completes.
-func makeTimeSkippingInfo(mutableState historyi.MutableState) *commonpb.TimeSkippingInfo {
-	tsi := mutableState.GetExecutionInfo().GetTimeSkippingInfo()
-	info := &commonpb.TimeSkippingInfo{
-		CurrentTime: timestamppb.New(mutableState.Now()),
-		IsRunning:   tsi.GetConfig().GetEnabled(),
-	}
-	if ff := tsi.GetFastForwardInfo(); ff != nil {
-		var createTime *timestamppb.Timestamp
-		// The server sets target = create + fast_forward, so recover the
-		// creation virtual time by subtracting the configured duration.
-		if target := ff.GetTargetTime(); target != nil {
-			createTime = timestamppb.New(target.AsTime().Add(-tsi.GetConfig().GetFastForward().AsDuration()))
-		}
-		info.FastForward = &commonpb.TimeSkippingInfo_TimeSkippingFastForwardInfo{
-			CreateTime:   createTime,
-			TargetTime:   ff.GetTargetTime(),
-			HasCompleted: ff.GetHasReached(),
+// waitTimeSkipping blocks until the execution's fast-forward completes (or is cleared), patching each
+// delivered TimeSkippingInfo into result, and reports whether it did. It returns false when waitCtx is
+// done first (still pending). The caller must have already subscribed (before releasing the workflow
+// lease) and released the lease, so this waits without holding the lock.
+func waitTimeSkipping(
+	waitCtx context.Context,
+	result *historyservice.DescribeWorkflowExecutionResponse,
+	channel <-chan *commonpb.TimeSkippingInfo,
+) bool {
+	for {
+		select {
+		case <-waitCtx.Done():
+			return false
+		case info := <-channel:
+			result.WorkflowExtendedInfo.TimeSkippingInfo = info
+			if ff := info.GetFastForward(); ff == nil || ff.GetHasCompleted() {
+				return true
+			}
 		}
 	}
-	return info
 }
 
+// readTimeSkippingInfo re-reads the execution's current TimeSkippingInfo, recomputing the virtual time
+// with a fresh mutableState.Now(). Used after a wait times out so the returned CurrentTime (and any
+// skip accumulated meanwhile) is current rather than stale from the initial read.
+func readTimeSkippingInfo(
+	ctx context.Context,
+	req *historyservice.DescribeWorkflowExecutionRequest,
+	workflowConsistencyChecker api.WorkflowConsistencyChecker,
+) (*commonpb.TimeSkippingInfo, error) {
+	workflowLease, err := workflowConsistencyChecker.GetWorkflowLease(
+		ctx,
+		nil,
+		definition.NewWorkflowKey(
+			req.NamespaceId,
+			req.Request.Execution.WorkflowId,
+			req.Request.Execution.RunId,
+		),
+		locks.PriorityHigh,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer workflowLease.GetReleaseFn()(nil)
+	mutableState := workflowLease.GetMutableState()
+	return workflow.BuildTimeSkippingInfo(
+		mutableState.GetExecutionInfo().GetTimeSkippingInfo(),
+		mutableState.Now(),
+	), nil
+}
+
+// Invoke handles DescribeWorkflowExecution. When the request sets WaitTimeskippingCompletion and the
+// execution has a pending time-skipping fast-forward, it blocks until the fast-forward completes (or
+// is cleared) or the request context deadline is reached, returning the latest state in either case.
 func Invoke(
 	ctx context.Context,
 	req *historyservice.DescribeWorkflowExecutionRequest,
@@ -116,7 +149,15 @@ func Invoke(
 	// We release the lock on this workflow just before we return from this method, at which point mutable state might
 	// be mutated. Take extra care to clone all response methods as marshalling happens after we return and it is unsafe
 	// to mutate proto fields during marshalling.
-	defer func() { workflowLease.GetReleaseFn()(retError) }()
+	// The lease may be released early (before waiting on time skipping); the guard makes the defer a no-op then.
+	leaseReleased := false
+	releaseLease := func() {
+		if !leaseReleased {
+			leaseReleased = true
+			workflowLease.GetReleaseFn()(retError)
+		}
+	}
+	defer releaseLease()
 
 	mutableState := workflowLease.GetMutableState()
 	namespaceName := mutableState.GetNamespaceEntry().Name().String()
@@ -190,9 +231,10 @@ func Invoke(
 		result.WorkflowExtendedInfo.LastResetTime = executionState.StartTime
 	}
 
-	if executionInfo.TimeSkippingInfo != nil {
-		result.WorkflowExtendedInfo.TimeSkippingInfo = makeTimeSkippingInfo(mutableState)
-	}
+	result.WorkflowExtendedInfo.TimeSkippingInfo = workflow.BuildTimeSkippingInfo(
+		executionInfo.GetTimeSkippingInfo(),
+		mutableState.Now(),
+	)
 
 	if shard.GetConfig().ExternalPayloadsEnabled(namespaceName) {
 		executionStats := executionInfo.GetExecutionStats()
@@ -408,6 +450,35 @@ func Invoke(
 		return nil, err
 	}
 	result.PendingNexusOperations = append(result.PendingNexusOperations, hsmNexusOpInfos...)
+
+	ff := result.GetWorkflowExtendedInfo().GetTimeSkippingInfo().GetFastForward()
+	if req.GetRequest().GetWaitTimeskippingCompletion() && ff != nil && !ff.GetHasCompleted() {
+		if engine, err := shard.GetEngine(ctx); err == nil {
+			// Subscribe before releasing the lease so a fast-forward change can't slip through between the
+			// read above and the wait below; then release the lease and wait without holding it.
+			channel, unsubscribe := engine.SubscribeTimeSkippingFastForwardUpdate(chasm.ExecutionKey{
+				NamespaceID: req.NamespaceId,
+				BusinessID:  req.Request.Execution.WorkflowId,
+				RunID:       req.Request.Execution.RunId,
+			})
+			defer unsubscribe()
+			releaseLease()
+
+			// Wait on a shorter context that expires before the request deadline, so that on a timeout
+			// there is still budget to re-read the current virtual time instead of surfacing a deadline error.
+			waitCtx := ctx
+			if deadline, ok := ctx.Deadline(); ok {
+				var cancel context.CancelFunc
+				waitCtx, cancel = context.WithDeadline(ctx, deadline.Add(-describeWaitRefreshBuffer))
+				defer cancel()
+			}
+			if !waitTimeSkipping(waitCtx, result, channel) {
+				if info, err := readTimeSkippingInfo(ctx, req, workflowConsistencyChecker); err == nil {
+					result.WorkflowExtendedInfo.TimeSkippingInfo = info
+				}
+			}
+		}
+	}
 
 	return result, nil
 }
