@@ -82,6 +82,7 @@ type (
 
 		// time skipping tasks
 		RegenerateTimerTasksForTimeSkipping() error
+		GenerateTimeSkippingFastForwardTimerTask() error
 
 		// replication tasks
 		GenerateHistoryReplicationTasks(
@@ -1093,19 +1094,9 @@ func (r *TaskGeneratorImpl) RegenerateTimerTasksForTimeSkipping() error {
 		})
 	}
 
-	// (3) fast-forward timer — regenerate when configured so its real-time
-	// VisibilityTimestamp tracks the new accumulated skip.
-	tsi := r.mutableState.GetExecutionInfo().GetTimeSkippingInfo()
-	util := NewTimeSkippingInfoUtil(tsi)
-	if util.HasPendingFastForward() {
-		ff := tsi.GetFastForwardInfo()
-		r.mutableState.AddTasks(&tasks.TimeSkippingTimerTask{
-			// TaskID is set by shard
-			WorkflowKey:         r.mutableState.GetWorkflowKey(),
-			VisibilityTimestamp: ff.GetTargetTime().AsTime(),
-			VersionedTransition: tsi.GetFastForwardInfoLastUpdateVersionedTransition(),
-			ArchetypeID:         r.mutableState.ChasmTree().ArchetypeID(),
-		})
+	// (3) fast-forward timer
+	if err := r.GenerateTimeSkippingFastForwardTimerTask(); err != nil {
+		return err
 	}
 
 	// (4) start delays (start-with-delay, cron, retry in CAN, etc).
@@ -1154,5 +1145,28 @@ func (r *TaskGeneratorImpl) RegenerateTimerTasksForTimeSkipping() error {
 	// Generic StateMachineTimerTask (nexus HSM), WorkflowTaskTimeoutTask, and ActivityTimeoutTask
 	// are treated as a part of in-flight nexus operation and won't be regenerated.
 	// DeleteHistoryEventTask is not impacted by time skipping, and doesn't need regeneration.
+	return nil
+}
+
+// GenerateTimeSkippingFastForwardTimerTask stamps the fast-forward wake-up timer against the
+// current accumulated skip. Callable on its own because it is the only producer of
+// tasks.TimeSkippingTimerTask: on a full refresh the per-component helpers cover every other
+// timer family, so refreshTasksForTimeSkipping calls just this one.
+//
+// Unlike RegenerateTimerTasksForTimeSkipping it is not gated on accumulated skip — a pending
+// fast-forward needs its wake-up even before the first skip.
+func (r *TaskGeneratorImpl) GenerateTimeSkippingFastForwardTimerTask() error {
+	tsi := r.mutableState.GetExecutionInfo().GetTimeSkippingInfo()
+	if !NewTimeSkippingInfoUtil(tsi).HasPendingFastForward() {
+		return nil
+	}
+
+	r.mutableState.AddTasks(&tasks.TimeSkippingTimerTask{
+		// TaskID is set by shard
+		WorkflowKey:         r.mutableState.GetWorkflowKey(),
+		VisibilityTimestamp: tsi.GetFastForwardInfo().GetTargetTime().AsTime(),
+		VersionedTransition: tsi.GetFastForwardInfoLastUpdateVersionedTransition(),
+		ArchetypeID:         r.mutableState.ChasmTree().ArchetypeID(),
+	})
 	return nil
 }

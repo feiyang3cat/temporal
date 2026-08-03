@@ -479,7 +479,8 @@ func (r *TaskRefresherImpl) refreshTasksForTimeSkipping(
 	minVersionedTransition *persistencespb.VersionedTransition,
 ) error {
 	executionState := mutableState.GetExecutionState()
-	// todo: pausing shouldn't stop task regen
+	// A paused workflow can't skip, but it keeps its accumulated skip and any pending
+	// fast-forward, so its timer tasks still need stamping against them.
 	if executionState.Status != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING &&
 		executionState.Status != enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED {
 		return nil
@@ -490,10 +491,11 @@ func (r *TaskRefresherImpl) refreshTasksForTimeSkipping(
 		return nil
 	}
 
-	// time-skipping task regen is not needed
-	// when VT is empty as all tasks will be generated with current virtual time conversion.
-	if transitionhistory.Compare(EmptyVersionedTransition, minVersionedTransition) == 0 {
-		return nil
+	// On a full refresh the per-component helpers regenerate user timers, timeout timers,
+	// the backoff timer, and activity retry timers, all converted against the current
+	// accumulated skip. The fast-forward wake-up has no other producer.
+	if transitionhistory.Compare(minVersionedTransition, EmptyVersionedTransition) == 0 {
+		return taskGenerator.GenerateTimeSkippingFastForwardTimerTask()
 	}
 	if transitionhistory.Compare(
 		tsi.GetLastUpdateVersionedTransition(),
