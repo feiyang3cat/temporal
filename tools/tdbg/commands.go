@@ -750,11 +750,10 @@ func AdminBatchRefreshWorkflowTasks(c *cli.Context, clientFactory ClientFactory,
 	adminClient := clientFactory.AdminClient(c)
 	workflowClient := clientFactory.WorkflowClient(c)
 
-	nsName, err := getRequiredOption(c, FlagNamespace)
+	nsNames, err := getBatchNamespaces(c)
 	if err != nil {
 		return err
 	}
-
 	query, err := getRequiredOption(c, FlagVisibilityQuery)
 	if err != nil {
 		return err
@@ -769,30 +768,44 @@ func AdminBatchRefreshWorkflowTasks(c *cli.Context, clientFactory ClientFactory,
 	if jobID == "" {
 		jobID = fmt.Sprintf("batch-refresh-%d", time.Now().UnixNano())
 	}
-	jobIDWithNS := fmt.Sprintf("%s:%s", jobID, nsName)
-
 	ctx, cancel := newContext(c)
 	defer cancel()
 
-	// Count workflows matching the query to confirm with user
-	countResp, err := workflowClient.CountWorkflowExecutions(ctx, &workflowservice.CountWorkflowExecutionsRequest{
-		Namespace: nsName,
-		Query:     query,
-	})
+	targetNamespaces, err := resolveTargetNamespaces(ctx, workflowClient, nsNames, c.App.Writer, prompter)
 	if err != nil {
-		return fmt.Errorf("unable to count workflow executions: %w", err)
+		return err
+	}
+	nsNames = targetNamespaceNames(targetNamespaces)
+	nsName := nsNames[0]
+	jobIDWithNS := fmt.Sprintf("%s:%s", jobID, strings.Join(nsNames, ","))
+
+	var matchCount int64
+	for _, targetNamespace := range nsNames {
+		countResp, err := workflowClient.CountWorkflowExecutions(ctx, &workflowservice.CountWorkflowExecutionsRequest{
+			Namespace: targetNamespace,
+			Query:     query,
+		})
+		if err != nil {
+			return fmt.Errorf("unable to count workflow executions: %w", err)
+		}
+		matchCount += countResp.GetCount()
+	}
+	namespaceLabel := "namespace"
+	if len(nsNames) > 1 {
+		namespaceLabel = "namespaces"
 	}
 
-	msg := fmt.Sprintf("A workflow will be started in temporal-system to refresh tasks for %d execution(s) matching query %q in namespace %q. Continue Y/N?",
-		countResp.GetCount(), query, nsName)
+	msg := fmt.Sprintf("A workflow will be started in temporal-system to refresh tasks for %d execution(s) matching query %q in %s %q. Continue Y/N?",
+		matchCount, query, namespaceLabel, strings.Join(nsNames, ","))
 	prompter.Prompt(msg)
 
 	_, err = adminClient.StartAdminBatchOperation(ctx, &adminservice.StartAdminBatchOperationRequest{
-		Namespace:       nsName,
-		VisibilityQuery: query,
-		JobId:           jobIDWithNS,
-		Reason:          reason,
-		Identity:        getCurrentUserFromEnv(),
+		Namespace:        nsName,
+		TargetNamespaces: targetNamespaces,
+		VisibilityQuery:  query,
+		JobId:            jobIDWithNS,
+		Reason:           reason,
+		Identity:         getCurrentUserFromEnv(),
 		Operation: &adminservice.StartAdminBatchOperationRequest_RefreshTasksOperation{
 			RefreshTasksOperation: &adminservice.BatchOperationRefreshTasks{},
 		},

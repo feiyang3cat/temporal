@@ -3,13 +3,16 @@ package tdbg
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/urfave/cli/v2"
 	enumspb "go.temporal.io/api/enums/v1"
+	namespacepb "go.temporal.io/api/namespace/v1"
 	replicationpb "go.temporal.io/api/replication/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/server/api/adminservice/v1"
 	"google.golang.org/grpc"
@@ -26,6 +29,8 @@ type (
 		workflowservice.WorkflowServiceClient
 		isGlobalNamespace bool
 		activeCluster     string
+		missingNamespaces map[string]bool
+		emptyIDNamespaces map[string]bool
 	}
 
 	batchTestClient struct {
@@ -51,11 +56,19 @@ func (t *batchTestClient) WorkflowClient(*cli.Context) workflowservice.WorkflowS
 }
 
 func (t *batchTestWorkflowClient) DescribeNamespace(
-	context.Context,
-	*workflowservice.DescribeNamespaceRequest,
-	...grpc.CallOption,
+	_ context.Context,
+	request *workflowservice.DescribeNamespaceRequest,
+	_ ...grpc.CallOption,
 ) (*workflowservice.DescribeNamespaceResponse, error) {
+	if t.missingNamespaces[request.GetNamespace()] {
+		return nil, serviceerror.NewNamespaceNotFound(request.GetNamespace())
+	}
+	namespaceID := request.GetNamespace() + "-id"
+	if t.emptyIDNamespaces[request.GetNamespace()] {
+		namespaceID = ""
+	}
 	return &workflowservice.DescribeNamespaceResponse{
+		NamespaceInfo:     &namespacepb.NamespaceInfo{Id: namespaceID},
 		IsGlobalNamespace: t.isGlobalNamespace,
 		ReplicationConfig: &replicationpb.NamespaceReplicationConfig{
 			ActiveClusterName: t.activeCluster,
@@ -105,8 +118,12 @@ func TestBatchCommandSuite(t *testing.T) {
 func (s *batchCommandTestSuite) SetupTest() {
 	s.Assertions = require.New(s.T())
 	s.client = &batchTestClient{
-		admin:    &batchTestAdminClient{currentCluster: testCurrentCluster},
-		workflow: &batchTestWorkflowClient{activeCluster: testCurrentCluster},
+		admin: &batchTestAdminClient{currentCluster: testCurrentCluster},
+		workflow: &batchTestWorkflowClient{
+			activeCluster:     testCurrentCluster,
+			missingNamespaces: make(map[string]bool),
+			emptyIDNamespaces: make(map[string]bool),
+		},
 	}
 	s.app = NewCliApp(func(params *Params) {
 		params.ClientFactory = s.client
@@ -139,6 +156,10 @@ func (s *batchCommandTestSuite) TestAdminBatchStart() {
 		s.Equal("WorkflowType='MyWorkflow'", request.GetVisibilityQuery())
 		s.Equal("cleanup", request.GetReason())
 		s.Equal("my-job:target-ns", request.GetJobId())
+		s.Equal(
+			[]*adminservice.TargetNamespace{{Namespace: "target-ns", NamespaceId: "target-ns-id"}},
+			request.GetTargetNamespaces(),
+		)
 		s.Equal(enumspb.BATCH_OPERATION_TYPE_TERMINATE_WORKFLOW, request.GetDelegationOperation().GetBatchType())
 		s.Contains(s.output.String(), "DANGER: destructive delegated batch operation")
 		s.Contains(s.output.String(), "User namespace: \"target-ns\"")
@@ -161,6 +182,30 @@ func (s *batchCommandTestSuite) TestAdminBatchStart() {
 		s.NotEmpty(request.GetIdentity())
 		s.Contains(s.output.String(), "Operation: terminate-activities")
 		s.Contains(s.output.String(), "Currently matching: 5 activities")
+	})
+
+	s.Run("Missing namespaces can be skipped", func() {
+		s.client.workflow.missingNamespaces["missing"] = true
+		defer delete(s.client.workflow.missingNamespaces, "missing")
+		s.client.admin.lastRequest = nil
+
+		s.NoError(s.run(
+			"--namespaces", "target-ns",
+			"--namespaces", "missing",
+			"--batch-type", batchTypeTerminateWorkflows,
+			"--query", "A=B",
+			"--reason", "cleanup",
+			"--job-id", "partial-job",
+		))
+
+		request := s.client.admin.lastRequest
+		s.NotNil(request)
+		s.Equal("partial-job:target-ns", request.GetJobId())
+		s.Equal(
+			[]*adminservice.TargetNamespace{{Namespace: "target-ns", NamespaceId: "target-ns-id"}},
+			request.GetTargetNamespaces(),
+		)
+		s.Contains(s.output.String(), `namespaces "missing" could not be resolved`)
 	})
 
 	s.Run("Unknown batch type is rejected", func() {
@@ -189,4 +234,44 @@ func (s *batchCommandTestSuite) TestAdminBatchStart() {
 		s.ErrorContains(err, "must be started in the active cluster")
 		s.Nil(s.client.admin.lastRequest, "the job must not be started")
 	})
+}
+
+type batchAutoConfirmFlagLookup bool
+
+func (a batchAutoConfirmFlagLookup) Bool(string) bool {
+	return bool(a)
+}
+
+func TestResolveTargetNamespaces(t *testing.T) {
+	workflowClient := &batchTestWorkflowClient{
+		missingNamespaces: map[string]bool{"missing": true},
+		emptyIDNamespaces: map[string]bool{"empty-id": true},
+	}
+	var output bytes.Buffer
+	prompter := NewPrompter(batchAutoConfirmFlagLookup(false), func(params *PrompterParams) {
+		params.Reader = strings.NewReader("yes\n")
+		params.Writer = &output
+		params.Exiter = func(int) { t.Fatal("confirmation unexpectedly rejected") }
+	})
+
+	targetNamespaces, err := resolveTargetNamespaces(
+		context.Background(),
+		workflowClient,
+		[]string{"valid", "missing", "empty-id"},
+		&output,
+		prompter,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []*adminservice.TargetNamespace{{Namespace: "valid", NamespaceId: "valid-id"}}, targetNamespaces)
+	require.Contains(t, output.String(), `namespaces "missing,empty-id" could not be resolved`)
+	require.Contains(t, output.String(), `Choose no to correct the namespace names and retry.`)
+
+	_, err = resolveTargetNamespaces(
+		context.Background(),
+		workflowClient,
+		[]string{"missing", "empty-id"},
+		&output,
+		prompter,
+	)
+	require.ErrorContains(t, err, "none of the requested namespaces could be resolved")
 }

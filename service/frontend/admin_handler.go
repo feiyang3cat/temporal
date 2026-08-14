@@ -1275,12 +1275,31 @@ func (adh *AdminHandler) StartAdminBatchOperation(
 		return nil, err
 	}
 
-	// admin batch workflows runs in the temporal-system namespace to operate on target namespaces
-	targetNS := adminRequest.GetNamespace()
-	targetNSID, err := adh.namespaceRegistry.GetNamespaceID(namespace.Name(targetNS))
-	if err != nil {
-		return nil, err
+	targetNamespaces := adminRequest.GetTargetNamespaces()
+	if len(targetNamespaces) == 0 {
+		targetNamespaces = []*adminservice.TargetNamespace{{Namespace: adminRequest.GetNamespace()}}
 	}
+	resolvedTargetNamespaces := make([]*adminservice.TargetNamespace, 0, len(targetNamespaces))
+	seenNamespaces := make(map[string]struct{}, len(targetNamespaces))
+	for _, targetNamespace := range targetNamespaces {
+		targetNS := targetNamespace.GetNamespace()
+		if targetNS == "" {
+			return nil, serviceerror.NewInvalidArgument("namespace is empty")
+		}
+		if _, ok := seenNamespaces[targetNS]; ok {
+			return nil, serviceerror.NewInvalidArgumentf("namespace %q is duplicated", targetNS)
+		}
+		seenNamespaces[targetNS] = struct{}{}
+		targetNSID, err := adh.namespaceRegistry.GetNamespaceID(namespace.Name(targetNS))
+		if err != nil {
+			return nil, err
+		}
+		resolvedTargetNamespaces = append(resolvedTargetNamespaces, &adminservice.TargetNamespace{
+			Namespace:   targetNS,
+			NamespaceId: targetNSID.String(),
+		})
+	}
+	targetNSID := resolvedTargetNamespaces[0].GetNamespaceId()
 	sysNS, sysNSID := primitives.SystemLocalNamespace, primitives.SystemNamespaceID
 	operateJobID := adminRequest.JobId
 
@@ -1306,18 +1325,19 @@ func (adh *AdminHandler) StartAdminBatchOperation(
 	// prepare the batch-workflow input
 	batchWfInput := &batchspb.BatchOperationInput{
 		AdminRequest: adminRequest,
-		NamespaceId:  targetNSID.String(),
+		NamespaceId:  targetNSID,
 	}
+	adminRequest.TargetNamespaces = resolvedTargetNamespaces
 	identity := adminRequest.GetIdentity()
 	var batchTypeMemo string
 	switch op := adminRequest.Operation.(type) {
 	case *adminservice.StartAdminBatchOperationRequest_RefreshTasksOperation:
 		batchTypeMemo = "refresh_tasks"
 	case *adminservice.StartAdminBatchOperationRequest_DelegationOperation:
-		// These operations mutate workflow state of the target ns,
-		// so the cluster should be active for the target namespace.
-		if err := adh.checkTargetNamespaceActive(targetNS); err != nil {
-			return nil, err
+		for _, target := range resolvedTargetNamespaces {
+			if err := adh.checkTargetNamespaceActive(target.GetNamespace()); err != nil {
+				return nil, err
+			}
 		}
 		delegatedBatchType := op.DelegationOperation.GetBatchType()
 		delegatedBatchRequest, err := createDelegatedBatchRequest(adminRequest, delegatedBatchType)
@@ -1394,6 +1414,9 @@ func validateAdminBatchOperation(params *adminservice.StartAdminBatchOperationRe
 	}
 	if len(params.GetVisibilityQuery()) != 0 && len(params.GetExecutions()) != 0 {
 		return serviceerror.NewInvalidArgument("batch query and executions are mutually exclusive")
+	}
+	if len(params.GetTargetNamespaces()) > 1 && len(params.GetExecutions()) != 0 {
+		return serviceerror.NewInvalidArgument("executions cannot be used with multiple namespaces")
 	}
 
 	switch op := params.GetOperation().(type) {
