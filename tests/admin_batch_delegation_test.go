@@ -94,29 +94,35 @@ func (s *AdminBatchDelegationTestSuite) awaitVisibilityCount(
 	}, 20*time.Second, 500*time.Millisecond)
 }
 
-// TestTdbgBatchTerminate_RunsInSystemNamespaceAgainstTargetNamespace is the case the feature
-// exists for: the batch workflow runs on the system namespace's per-namespace worker, and its
-// per-execution calls target another namespace.
-func (s *AdminBatchDelegationTestSuite) TestTdbgBatchTerminate_RunsInSystemNamespaceAgainstTargetNamespace() {
+// TestTdbgBatchTerminate_RunsInSystemNamespaceAcrossTargetNamespaces verifies that the batch
+// workflow runs on the system namespace's per-namespace worker while its per-execution calls
+// target workflows in multiple namespaces.
+func (s *AdminBatchDelegationTestSuite) TestTdbgBatchTerminate_RunsInSystemNamespaceAcrossTargetNamespaces() {
 	env := s.newTestEnv()
 
-	ns := env.Namespace().String()
+	namespaces := []string{env.Namespace().String(), env.ExternalNamespace().String()}
+	ns := namespaces[0]
 	workflowTypeName := "admin-batch-delegation-wf-" + uuid.NewString()
 	query := fmt.Sprintf("WorkflowType = '%s'", workflowTypeName)
 
-	executions := s.startUnworkedWorkflows(env, ns, workflowTypeName, 2)
+	executions := map[string][]*commonpb.WorkflowExecution{
+		ns:            s.startUnworkedWorkflows(env, ns, workflowTypeName, 2),
+		namespaces[1]: s.startUnworkedWorkflows(env, namespaces[1], workflowTypeName, 1),
+	}
 	nonMatchingWorkflowType := workflowTypeName + "-non-matching-batch-query"
 	nonMatchingExecution := s.startUnworkedWorkflows(env, ns, nonMatchingWorkflowType, 1)[0]
 	systemExecution := s.startUnworkedWorkflows(env, primitives.SystemLocalNamespace, workflowTypeName, 1)[0]
 	s.awaitVisibilityCount(env, ns, query, 2)
+	s.awaitVisibilityCount(env, namespaces[1], query, 1)
 	s.awaitVisibilityCount(env, ns, fmt.Sprintf("WorkflowType = '%s'", nonMatchingWorkflowType), 1)
 	s.awaitVisibilityCount(env, primitives.SystemLocalNamespace, query, 1)
 
 	jobID := uuid.NewString()
 	s.NoError(s.runTdbg(env,
 		"--"+tdbg.FlagYes,
-		"--"+tdbg.FlagNamespace, ns,
 		"delegated-batch", "start",
+		"--"+tdbg.FlagNamespaces, namespaces[0],
+		"--"+tdbg.FlagNamespaces, namespaces[1],
 		"--"+tdbg.FlagBatchType, "terminate-workflows",
 		"--"+tdbg.FlagVisibilityQuery, query,
 		"--"+tdbg.FlagReason, "test batch terminate from the system namespace",
@@ -125,7 +131,7 @@ func (s *AdminBatchDelegationTestSuite) TestTdbgBatchTerminate_RunsInSystemNames
 
 	// tdbg qualifies the job ID with the namespace: the batch workflow runs in the system namespace,
 	// where job IDs from every namespace share one workflow ID space.
-	batchWorkflowID := jobID + ":" + ns
+	batchWorkflowID := jobID + ":" + strings.Join(namespaces, ",")
 
 	s.Await(func(s *AdminBatchDelegationTestSuite) {
 		resp, err := env.FrontendClient().DescribeWorkflowExecution(s.Context(), &workflowservice.DescribeWorkflowExecutionRequest{
@@ -145,13 +151,15 @@ func (s *AdminBatchDelegationTestSuite) TestTdbgBatchTerminate_RunsInSystemNames
 	s.ErrorAs(err, &notFound)
 
 	// The operation reached the target namespace.
-	for _, execution := range executions {
-		resp, err := env.FrontendClient().DescribeWorkflowExecution(s.Context(), &workflowservice.DescribeWorkflowExecutionRequest{
-			Namespace: ns,
-			Execution: execution,
-		})
-		s.NoError(err)
-		s.Equal(enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED, resp.GetWorkflowExecutionInfo().GetStatus())
+	for namespace, namespaceExecutions := range executions {
+		for _, execution := range namespaceExecutions {
+			resp, err := env.FrontendClient().DescribeWorkflowExecution(s.Context(), &workflowservice.DescribeWorkflowExecutionRequest{
+				Namespace: namespace,
+				Execution: execution,
+			})
+			s.NoError(err)
+			s.Equal(enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED, resp.GetWorkflowExecutionInfo().GetStatus())
+		}
 	}
 
 	// Query selection is scoped to the target namespace and does not affect non-matching workflows.
@@ -178,65 +186,8 @@ func (s *AdminBatchDelegationTestSuite) TestTdbgBatchTerminate_RunsInSystemNames
 
 		var hbd batcher.HeartBeatDetails
 		s.NoError(systemClient.GetWorkflow(s.Context(), batchWorkflowID, "").Get(s.Context(), &hbd))
-		s.Equal(int64(2), hbd.TotalEstimate)
-		s.Equal(2, hbd.SuccessCount)
+		s.Equal(int64(3), hbd.TotalEstimate)
+		s.Equal(3, hbd.SuccessCount)
 		s.Equal(0, hbd.ErrorCount)
 	}
-}
-
-func (s *AdminBatchDelegationTestSuite) TestTdbgBatchTerminate_SharedQueryAcrossNamespaces() {
-	env := s.newTestEnv()
-
-	namespaces := []string{env.Namespace().String(), env.ExternalNamespace().String()}
-	workflowTypeName := "admin-batch-delegation-wf-" + uuid.NewString()
-	query := fmt.Sprintf("WorkflowType = '%s'", workflowTypeName)
-	executions := make(map[string]*commonpb.WorkflowExecution, len(namespaces))
-	for _, namespace := range namespaces {
-		executions[namespace] = s.startUnworkedWorkflows(env, namespace, workflowTypeName, 1)[0]
-		s.awaitVisibilityCount(env, namespace, query, 1)
-	}
-
-	jobID := uuid.NewString()
-	s.Require().NoError(s.runTdbg(env,
-		"--"+tdbg.FlagYes,
-		"delegated-batch", "start",
-		"--"+tdbg.FlagNamespaces, namespaces[0],
-		"--"+tdbg.FlagNamespaces, namespaces[1],
-		"--"+tdbg.FlagBatchType, "terminate-workflows",
-		"--"+tdbg.FlagVisibilityQuery, query,
-		"--"+tdbg.FlagReason, "test shared query across namespaces",
-		"--"+tdbg.FlagJobID, jobID,
-	))
-
-	batchWorkflowID := jobID + ":" + strings.Join(namespaces, ",")
-	s.Await(func(s *AdminBatchDelegationTestSuite) {
-		resp, err := env.FrontendClient().DescribeWorkflowExecution(s.Context(), &workflowservice.DescribeWorkflowExecutionRequest{
-			Namespace: primitives.SystemLocalNamespace,
-			Execution: &commonpb.WorkflowExecution{WorkflowId: batchWorkflowID},
-		})
-		s.Require().NoError(err)
-		s.Equal(enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, resp.GetWorkflowExecutionInfo().GetStatus())
-	}, 60*time.Second, time.Second)
-
-	for namespace, execution := range executions {
-		resp, err := env.FrontendClient().DescribeWorkflowExecution(s.Context(), &workflowservice.DescribeWorkflowExecutionRequest{
-			Namespace: namespace,
-			Execution: execution,
-		})
-		s.Require().NoError(err)
-		s.Equal(enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED, resp.GetWorkflowExecutionInfo().GetStatus())
-	}
-
-	systemClient, err := sdkclient.Dial(sdkclient.Options{
-		HostPort:  env.FrontendGRPCAddress(),
-		Namespace: primitives.SystemLocalNamespace,
-	})
-	s.Require().NoError(err)
-	defer systemClient.Close()
-
-	var hbd batcher.HeartBeatDetails
-	s.Require().NoError(systemClient.GetWorkflow(s.Context(), batchWorkflowID, "").Get(s.Context(), &hbd))
-	s.Equal(int64(2), hbd.TotalEstimate)
-	s.Equal(2, hbd.SuccessCount)
-	s.Equal(0, hbd.ErrorCount)
 }

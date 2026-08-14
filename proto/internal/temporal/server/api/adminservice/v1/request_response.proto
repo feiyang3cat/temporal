@@ -622,8 +622,13 @@ message GetTaskQueueUserDataResponse {
 // StartAdminBatchOperationRequest starts an admin batch operation.
 // WARNING: Batch Operations are exposed to all users of the namespace. Admin Batch Operations should be exercised with caution.
 message StartAdminBatchOperationRequest {
-  // Namespace that contains the batch operation.
+  // Target namespace for the batch operation.
+  // For operations targeting multiple namespaces, this field contains the first
+  // target namespace to preserve the convention that every request has a namespace.
+  // The `target_namespaces` field contains the complete list of target namespaces.
   string namespace = 1;
+
+  repeated TargetNamespace target_namespaces = 7;
 
   // Visibility query defines the group of workflows to apply the batch operation.
   // This field and `executions` are mutually exclusive.
@@ -641,8 +646,6 @@ message StartAdminBatchOperationRequest {
 
   // The identity of the worker/client.
   string identity = 6;
-
-  repeated TargetNamespace target_namespaces = 7;
 
   // The admin batch operation to perform.
   oneof operation {

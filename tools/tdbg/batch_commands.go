@@ -194,7 +194,7 @@ func getBatchNamespaces(c *cli.Context) ([]string, error) {
 	for i, namespaceName := range namespaces {
 		namespaceName = strings.TrimSpace(namespaceName)
 		if namespaceName == "" {
-			return nil, fmt.Errorf("namespace is empty")
+			return nil, errors.New("namespace is empty")
 		}
 		if _, ok := seen[namespaceName]; ok {
 			return nil, fmt.Errorf("namespace %q is duplicated", namespaceName)

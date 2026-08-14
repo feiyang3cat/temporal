@@ -1284,10 +1284,10 @@ func (adh *AdminHandler) StartAdminBatchOperation(
 	for _, targetNamespace := range targetNamespaces {
 		targetNS := targetNamespace.GetNamespace()
 		if targetNS == "" {
-			return nil, serviceerror.NewInvalidArgument("namespace is empty")
+			return nil, serviceerror.NewInvalidArgument("target namespace is empty")
 		}
 		if _, ok := seenNamespaces[targetNS]; ok {
-			return nil, serviceerror.NewInvalidArgumentf("namespace %q is duplicated", targetNS)
+			continue
 		}
 		seenNamespaces[targetNS] = struct{}{}
 		targetNSID, err := adh.namespaceRegistry.GetNamespaceID(namespace.Name(targetNS))

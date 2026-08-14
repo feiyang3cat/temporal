@@ -5489,8 +5489,12 @@ func (x *GetTaskQueueUserDataResponse) GetVersion() int64 {
 // WARNING: Batch Operations are exposed to all users of the namespace. Admin Batch Operations should be exercised with caution.
 type StartAdminBatchOperationRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Namespace that contains the batch operation.
-	Namespace string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// Target namespace for the batch operation.
+	// For operations targeting multiple namespaces, this field contains the first
+	// target namespace to preserve the convention that every request has a namespace.
+	// The `target_namespaces` field contains the complete list of target namespaces.
+	Namespace        string             `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	TargetNamespaces []*TargetNamespace `protobuf:"bytes,7,rep,name=target_namespaces,json=targetNamespaces,proto3" json:"target_namespaces,omitempty"`
 	// Visibility query defines the group of workflows to apply the batch operation.
 	// This field and `executions` are mutually exclusive.
 	VisibilityQuery string `protobuf:"bytes,2,opt,name=visibility_query,json=visibilityQuery,proto3" json:"visibility_query,omitempty"`
@@ -5502,8 +5506,7 @@ type StartAdminBatchOperationRequest struct {
 	// This field and `visibility_query` are mutually exclusive.
 	Executions []*v1.WorkflowExecution `protobuf:"bytes,5,rep,name=executions,proto3" json:"executions,omitempty"`
 	// The identity of the worker/client.
-	Identity         string             `protobuf:"bytes,6,opt,name=identity,proto3" json:"identity,omitempty"`
-	TargetNamespaces []*TargetNamespace `protobuf:"bytes,7,rep,name=target_namespaces,json=targetNamespaces,proto3" json:"target_namespaces,omitempty"`
+	Identity string `protobuf:"bytes,6,opt,name=identity,proto3" json:"identity,omitempty"`
 	// The admin batch operation to perform.
 	//
 	// Types that are valid to be assigned to Operation:
@@ -5552,6 +5555,13 @@ func (x *StartAdminBatchOperationRequest) GetNamespace() string {
 	return ""
 }
 
+func (x *StartAdminBatchOperationRequest) GetTargetNamespaces() []*TargetNamespace {
+	if x != nil {
+		return x.TargetNamespaces
+	}
+	return nil
+}
+
 func (x *StartAdminBatchOperationRequest) GetVisibilityQuery() string {
 	if x != nil {
 		return x.VisibilityQuery
@@ -5585,13 +5595,6 @@ func (x *StartAdminBatchOperationRequest) GetIdentity() string {
 		return x.Identity
 	}
 	return ""
-}
-
-func (x *StartAdminBatchOperationRequest) GetTargetNamespaces() []*TargetNamespace {
-	if x != nil {
-		return x.TargetNamespaces
-	}
-	return nil
 }
 
 func (x *StartAdminBatchOperationRequest) GetOperation() isStartAdminBatchOperationRequest_Operation {
@@ -6449,15 +6452,15 @@ const file_temporal_server_api_adminservice_v1_request_response_proto_rawDesc = 
 	"\tuser_data\x18\x01 \x01(\v29.temporal.server.api.persistence.v1.TaskQueueTypeUserDataR\buserData\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x03R\aversion\"\xdf\x04\n" +
 	"\x1fStartAdminBatchOperationRequest\x12\x1c\n" +
-	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12)\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12a\n" +
+	"\x11target_namespaces\x18\a \x03(\v24.temporal.server.api.adminservice.v1.TargetNamespaceR\x10targetNamespaces\x12)\n" +
 	"\x10visibility_query\x18\x02 \x01(\tR\x0fvisibilityQuery\x12\x15\n" +
 	"\x06job_id\x18\x03 \x01(\tR\x05jobId\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12I\n" +
 	"\n" +
 	"executions\x18\x05 \x03(\v2).temporal.api.common.v1.WorkflowExecutionR\n" +
 	"executions\x12\x1a\n" +
-	"\bidentity\x18\x06 \x01(\tR\bidentity\x12a\n" +
-	"\x11target_namespaces\x18\a \x03(\v24.temporal.server.api.adminservice.v1.TargetNamespaceR\x10targetNamespaces\x12y\n" +
+	"\bidentity\x18\x06 \x01(\tR\bidentity\x12y\n" +
 	"\x17refresh_tasks_operation\x18\n" +
 	" \x01(\v2?.temporal.server.api.adminservice.v1.BatchOperationRefreshTasksH\x00R\x15refreshTasksOperation\x12r\n" +
 	"\x14delegation_operation\x18\v \x01(\v2=.temporal.server.api.adminservice.v1.BatchOperationDelegationH\x00R\x13delegationOperationB\v\n" +
@@ -6740,8 +6743,8 @@ var file_temporal_server_api_adminservice_v1_request_response_proto_depIdxs = []
 	147, // 82: temporal.server.api.adminservice.v1.ForceUnloadTaskQueuePartitionRequest.task_queue_partition:type_name -> temporal.server.api.taskqueue.v1.TaskQueuePartition
 	129, // 83: temporal.server.api.adminservice.v1.GetTaskQueueUserDataRequest.task_queue_type:type_name -> temporal.api.enums.v1.TaskQueueType
 	150, // 84: temporal.server.api.adminservice.v1.GetTaskQueueUserDataResponse.user_data:type_name -> temporal.server.api.persistence.v1.TaskQueueTypeUserData
-	108, // 85: temporal.server.api.adminservice.v1.StartAdminBatchOperationRequest.executions:type_name -> temporal.api.common.v1.WorkflowExecution
-	93,  // 86: temporal.server.api.adminservice.v1.StartAdminBatchOperationRequest.target_namespaces:type_name -> temporal.server.api.adminservice.v1.TargetNamespace
+	93,  // 85: temporal.server.api.adminservice.v1.StartAdminBatchOperationRequest.target_namespaces:type_name -> temporal.server.api.adminservice.v1.TargetNamespace
+	108, // 86: temporal.server.api.adminservice.v1.StartAdminBatchOperationRequest.executions:type_name -> temporal.api.common.v1.WorkflowExecution
 	94,  // 87: temporal.server.api.adminservice.v1.StartAdminBatchOperationRequest.refresh_tasks_operation:type_name -> temporal.server.api.adminservice.v1.BatchOperationRefreshTasks
 	95,  // 88: temporal.server.api.adminservice.v1.StartAdminBatchOperationRequest.delegation_operation:type_name -> temporal.server.api.adminservice.v1.BatchOperationDelegation
 	151, // 89: temporal.server.api.adminservice.v1.BatchOperationDelegation.batch_type:type_name -> temporal.api.enums.v1.BatchOperationType
