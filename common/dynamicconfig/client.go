@@ -60,8 +60,8 @@ type (
 	// other cases, the exact type must be used. If a Value is returned with an unexpected
 	// type, it will be ignored.
 	ConstrainedValue struct {
-		Constraints Constraints `json:"constraints"`
-		Value       any         `json:"value"`
+		Constraints Constraints
+		Value       any
 	}
 	TypedConstrainedValue[T any] struct {
 		Constraints Constraints
@@ -91,13 +91,15 @@ type (
 	// each.) If you return a ConstrainedValue with Namespace and ShardID set, for example,
 	// that value will never be used, even if the Namespace matches.
 	Constraints struct {
-		Namespace     string                `json:"namespace,omitempty"`
-		NamespaceID   string                `json:"namespaceId,omitempty"`
-		TaskQueueName string                `json:"taskQueueName,omitempty"`
-		Destination   string                `json:"destination,omitempty"`
-		ChasmTaskType string                `json:"chasmTaskType,omitempty"`
-		TaskQueueType enumspb.TaskQueueType `json:"taskQueueType,omitempty"`
-		ShardID       int32                 `json:"shardId,omitempty"`
-		TaskType      enumsspb.TaskType     `json:"taskType,omitempty"`
+		Namespace     string
+		NamespaceID   string
+		TaskQueueName string
+		Destination   string
+		ChasmTaskType string
+		// File-based client renames it as "taskType".
+		TaskQueueType enumspb.TaskQueueType
+		ShardID       int32
+		// File-based client renames it as "historyTaskType".
+		TaskType enumsspb.TaskType
 	}
 )
