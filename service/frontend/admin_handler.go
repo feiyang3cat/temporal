@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	otellog "go.opentelemetry.io/otel/log"
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	namespacepb "go.temporal.io/api/namespace/v1"
@@ -25,6 +26,7 @@ import (
 	batchspb "go.temporal.io/server/api/batch/v1"
 	clusterspb "go.temporal.io/server/api/cluster/v1"
 	commonspb "go.temporal.io/server/api/common/v1"
+	dynamicconfigspb "go.temporal.io/server/api/dynamicconfig/v1"
 	enumsspb "go.temporal.io/server/api/enums/v1"
 	healthspb "go.temporal.io/server/api/health/v1"
 	"go.temporal.io/server/api/historyservice/v1"
@@ -45,6 +47,7 @@ import (
 	"go.temporal.io/server/common/cluster"
 	"go.temporal.io/server/common/config"
 	"go.temporal.io/server/common/convert"
+	"go.temporal.io/server/common/dynamicconfig"
 	"go.temporal.io/server/common/headers"
 	"go.temporal.io/server/common/log"
 	"go.temporal.io/server/common/log/tag"
@@ -68,6 +71,7 @@ import (
 	"go.temporal.io/server/service/worker/scheduler"
 	"google.golang.org/grpc/health"
 	grpchealthspb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -85,6 +89,7 @@ type (
 		status int32
 
 		logger                     log.Logger
+		eventLogger                otellog.Logger
 		numberOfHistoryShards      int32
 		config                     *Config
 		namespaceDLQHandler        nsreplication.DLQMessageHandler
@@ -109,6 +114,7 @@ type (
 		historyHealthChecker       HealthChecker
 		chasmRegistry              *chasm.Registry
 		schedulerClient            schedulerpb.SchedulerServiceClient
+		dynamicClient              dynamicconfig.Client
 
 		// DEPRECATED: only history service on server side is supposed to
 		// use the following components.
@@ -123,6 +129,7 @@ type (
 		ReplicatorNamespaceReplicationQueue persistence.NamespaceReplicationQueue
 		visibilityMgr                       manager.VisibilityManager
 		Logger                              log.Logger
+		EventLogger                         otellog.Logger
 		TaskManager                         persistence.TaskManager
 		FairTaskManager                     persistence.FairTaskManager
 		PersistenceExecutionManager         persistence.ExecutionManager
@@ -143,6 +150,7 @@ type (
 		ChasmRegistry                       *chasm.Registry
 		NamespaceDataMerger                 nsreplication.NamespaceDataMerger
 		SchedulerClient                     schedulerpb.SchedulerServiceClient
+		DynamicClient                       dynamicconfig.Client
 
 		// DEPRECATED: only history service on server side is supposed to
 		// use the following components.
@@ -173,6 +181,7 @@ func NewAdminHandler(
 
 	return &AdminHandler{
 		logger:                     args.Logger,
+		eventLogger:                args.EventLogger,
 		status:                     common.DaemonStatusInitialized,
 		numberOfHistoryShards:      args.PersistenceConfig.NumHistoryShards,
 		config:                     args.Config,
@@ -200,6 +209,27 @@ func NewAdminHandler(
 		matchingClient:             args.matchingClient,
 		chasmRegistry:              args.ChasmRegistry,
 		schedulerClient:            args.SchedulerClient,
+		saValidator: searchattribute.NewValidator(
+			args.SaProvider,
+			args.SaMapperProvider,
+			args.Config.SearchAttributesNumberOfKeysLimit,
+			args.Config.SearchAttributesSizeOfValueLimit,
+			args.Config.SearchAttributesTotalSizeLimit,
+			args.visibilityMgr,
+			visibility.AllowListForValidation(
+				args.visibilityMgr.GetStoreNames(),
+				args.Config.VisibilityAllowList,
+			),
+			args.Config.SuppressErrorSetSystemSearchAttribute,
+		),
+		clusterMetadata:      args.ClusterMetadata,
+		healthServer:         args.HealthServer,
+		historyHealthChecker: historyHealthChecker,
+		taskCategoryRegistry: args.CategoryRegistry,
+		dynamicClient:        args.DynamicClient,
+		matchingClient:       args.matchingClient,
+		chasmRegistry:        args.ChasmRegistry,
+		schedulerClient:      args.SchedulerClient,
 	}
 }
 
@@ -398,8 +428,7 @@ func (adh *AdminHandler) unaliasAndValidateSearchAttributes(historyBatches []*co
 
 			unaliasedSas, err := searchattribute.UnaliasFields(adh.saMapperProvider, sas, nsName.String())
 			if err != nil {
-				var invArgErr *serviceerror.InvalidArgument
-				if !errors.As(err, &invArgErr) {
+				if _, ok := errors.AsType[*serviceerror.InvalidArgument](err); !ok {
 					return nil, err
 				}
 				// Mapper returns InvalidArgument if alias is not found. It means that history has field names, not aliases.
@@ -864,7 +893,32 @@ func (adh *AdminHandler) AddOrUpdateRemoteCluster(
 	ctx context.Context,
 	request *adminservice.AddOrUpdateRemoteClusterRequest,
 ) (_ *adminservice.AddOrUpdateRemoteClusterResponse, retError error) {
+	var (
+		lifecycleEvent     *remoteClusterLifecycleEvent
+		remoteResponse     *adminservice.DescribeClusterResponse
+		persistedBefore    *persistence.GetClusterMetadataResponse
+		persistenceRequest *persistence.SaveClusterMetadataRequest
+	)
+	// Bracket deferred emission with panic capture: the inner capture converts handler panics
+	// into retError for the event, while the outer capture recovers panics from emission itself.
 	defer log.CapturePanic(adh.logger, &retError)
+	defer func() {
+		lifecycleEvent.emitUpsertFailure(retError, remoteResponse, persistedBefore, persistenceRequest)
+	}()
+	defer log.CapturePanic(adh.logger, &retError)
+	lifecycleEvent = newRemoteClusterUpsertLifecycleEvent(
+		ctx,
+		adh.eventLogger,
+		adh.clusterMetadata,
+		adh.config,
+		remoteClusterAPIAdmin,
+		remoteClusterUpsertRequestFields{
+			FrontendAddress:               request.GetFrontendAddress(),
+			FrontendHTTPAddress:           request.GetFrontendHttpAddress(), //nolint:staticcheck // Audit the deprecated API request as received.
+			EnableRemoteClusterConnection: request.GetEnableRemoteClusterConnection(),
+			EnableReplication:             request.GetEnableReplication(),
+		},
+	)
 
 	adminClient := adh.clientFactory.NewRemoteAdminClientWithTimeout(
 		request.GetFrontendAddress(),
@@ -874,6 +928,7 @@ func (adh *AdminHandler) AddOrUpdateRemoteCluster(
 
 	// Fetch cluster metadata from remote cluster
 	resp, err := adminClient.DescribeCluster(ctx, &adminservice.DescribeClusterRequest{})
+	remoteResponse = resp
 	if err != nil {
 		return nil, err
 	}
@@ -905,14 +960,14 @@ func (adh *AdminHandler) AddOrUpdateRemoteCluster(
 	)
 	switch err.(type) {
 	case nil:
+		persistedBefore = clusterData
 		updateRequestVersion = clusterData.Version
 	case *serviceerror.NotFound:
 		updateRequestVersion = 0
 	default:
 		return nil, err
 	}
-
-	applied, err := clusterMetadataMrg.SaveClusterMetadata(ctx, &persistence.SaveClusterMetadataRequest{
+	saveRequest := &persistence.SaveClusterMetadataRequest{
 		ClusterMetadata: &persistencespb.ClusterMetadata{
 			ClusterName:              resp.GetClusterName(),
 			HistoryShardCount:        resp.GetHistoryShardCount(),
@@ -927,7 +982,9 @@ func (adh *AdminHandler) AddOrUpdateRemoteCluster(
 			Tags:                     resp.GetTags(),
 		},
 		Version: updateRequestVersion,
-	})
+	}
+	persistenceRequest = saveRequest
+	applied, err := clusterMetadataMrg.SaveClusterMetadata(ctx, saveRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -935,6 +992,7 @@ func (adh *AdminHandler) AddOrUpdateRemoteCluster(
 		return nil, serviceerror.NewInvalidArgument(
 			"Cannot update remote cluster due to update immutable fields")
 	}
+	lifecycleEvent.emitUpsertSuccess(persistedBefore, persistenceRequest)
 	return &adminservice.AddOrUpdateRemoteClusterResponse{}, nil
 }
 
@@ -944,18 +1002,42 @@ func (adh *AdminHandler) RemoveRemoteCluster(
 	ctx context.Context,
 	request *adminservice.RemoveRemoteClusterRequest,
 ) (_ *adminservice.RemoveRemoteClusterResponse, retError error) {
+	var (
+		lifecycleEvent     *remoteClusterLifecycleEvent
+		cachedBefore       cachedRemoteClusterLookup
+		persistenceRequest *persistence.DeleteClusterMetadataRequest
+	)
+	// Bracket deferred emission with panic capture: the inner capture converts handler panics
+	// into retError for the event, while the outer capture recovers panics from emission itself.
 	defer log.CapturePanic(adh.logger, &retError)
-
-	if err := validateClusterNotInUseByNamespaces(adh.namespaceRegistry, adh.clusterMetadata.GetCurrentClusterName(), request.GetClusterName()); err != nil {
-		return nil, err
-	}
-
-	if err := adh.clusterMetadataManager.DeleteClusterMetadata(
+	defer func() {
+		lifecycleEvent.emitRemoveFailure(retError, cachedBefore, persistenceRequest)
+	}()
+	defer log.CapturePanic(adh.logger, &retError)
+	clusterName := request.GetClusterName()
+	lifecycleEvent = newRemoteClusterRemoveLifecycleEvent(
 		ctx,
-		&persistence.DeleteClusterMetadataRequest{ClusterName: request.GetClusterName()},
-	); err != nil {
+		adh.eventLogger,
+		adh.clusterMetadata,
+		adh.config,
+		remoteClusterAPIAdmin,
+		remoteClusterRemoveRequestFields{ClusterName: clusterName},
+	)
+	if lifecycleEvent != nil {
+		// Admin does not use the cluster cache for removal; this lookup is audit-only.
+		cachedBefore = lookupCachedRemoteCluster(adh.clusterMetadata, clusterName)
+	}
+
+	if err := validateClusterNotInUseByNamespaces(adh.namespaceRegistry, adh.clusterMetadata.GetCurrentClusterName(), clusterName); err != nil {
 		return nil, err
 	}
+
+	deleteRequest := &persistence.DeleteClusterMetadataRequest{ClusterName: clusterName}
+	persistenceRequest = deleteRequest
+	if err := adh.clusterMetadataManager.DeleteClusterMetadata(ctx, deleteRequest); err != nil {
+		return nil, err
+	}
+	lifecycleEvent.emitRemoveSuccess(cachedBefore, persistenceRequest)
 	return &adminservice.RemoveRemoteClusterResponse{}, nil
 }
 
@@ -2135,6 +2217,54 @@ func (adh *AdminHandler) validateAndResolveArchetypeID(
 		return chasm.UnspecifiedArchetypeID, serviceerror.NewInvalidArgumentf("unknown archetype: %s", archetype)
 	}
 	return archetypeID, nil
+}
+
+func (adh *AdminHandler) GetDynamicConfigurations(
+	ctx context.Context,
+	req *adminservice.GetDynamicConfigurationsRequest,
+) (*adminservice.GetDynamicConfigurationsResponse, error) {
+	requestedKeys := req.GetDynamicConfigKeys()
+	adh.logger.Info("Received request for dynamic config values", tag.Int("numKeys", len(requestedKeys)))
+	configMap := make(map[string]*dynamicconfigspb.ConstrainedValues, len(requestedKeys))
+	for _, key := range requestedKeys {
+		k := dynamicconfig.MakeKey(key)
+
+		dcEntry := adh.dynamicClient.GetValue(k)
+		protoValues := make([]*dynamicconfigspb.ConstrainedValue, 0, len(dcEntry))
+		for _, cv := range dcEntry {
+			val := cv.Value
+			if d, ok := val.(time.Duration); ok {
+				val = d.String()
+			}
+			s, err := structpb.NewValue(val)
+			if err != nil {
+				adh.logger.Error("Failed to convert dynamic config value to structpb.Value", tag.Error(err), tag.Key(key))
+				continue
+			}
+			protoValues = append(protoValues, &dynamicconfigspb.ConstrainedValue{
+				Value: s,
+				Constraints: &dynamicconfigspb.Constraints{
+					Namespace:     cv.Constraints.Namespace,
+					NamespaceId:   cv.Constraints.NamespaceID,
+					TaskQueueName: cv.Constraints.TaskQueueName,
+					TaskQueueType: int32(cv.Constraints.TaskQueueType),
+					TaskType:      int32(cv.Constraints.TaskType),
+					ShardId:       cv.Constraints.ShardID,
+					Destination:   cv.Constraints.Destination,
+				},
+			})
+		}
+		configMap[key] = &dynamicconfigspb.ConstrainedValues{Items: protoValues}
+	}
+
+	hostConfig := &adminservice.HostConfig{
+		Hostname:      adh.hostInfoProvider.HostInfo().Identity(),
+		DynamicConfig: configMap,
+	}
+
+	return &adminservice.GetDynamicConfigurationsResponse{
+		HostConfig: []*adminservice.HostConfig{hostConfig},
+	}, nil
 }
 
 func validateHistoryDLQKey(
