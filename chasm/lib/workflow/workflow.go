@@ -50,6 +50,13 @@ type Workflow struct {
 	// Updates indexed by update ID, used to store the update components.
 	Updates chasm.Map[string, *WorkflowUpdate]
 
+	// Native is set for a workflow created by NewNativeWorkflow, which holds its history events and
+	// workflow task in this tree instead of in mutable state.
+	Native chasm.Field[*chasmworkflowpb.NativeWorkflowState]
+
+	// NativeHistory holds a native workflow's history events, keyed by event ID.
+	NativeHistory chasm.Map[int64, *historypb.HistoryEvent]
+
 	// Activities holds the workflow's activities, keyed by scheduled event ID. Only used when the
 	// workflow's activity commands are handled by NewActivityLibrary; the server runs workflow
 	// activities in mutable state.
@@ -78,8 +85,11 @@ func NewWorkflow(
 // which is bypassed for workflows). Here mutableStateImpl updates the execution state directly and this method
 // only reflects it, so it is meant for the read path (e.g. task validation), not for driving state transitions.
 func (w *Workflow) LifecycleState(
-	_ chasm.Context,
+	ctx chasm.Context,
 ) chasm.LifecycleState {
+	if state, ok := w.Native.TryGet(ctx); ok {
+		return nativeLifecycleState(state)
+	}
 	return w.MSPointer.LifecycleState()
 }
 
