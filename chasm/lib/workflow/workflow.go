@@ -10,7 +10,6 @@ import (
 	"go.temporal.io/server/chasm/lib/nexusoperation"
 	chasmworkflowpb "go.temporal.io/server/chasm/lib/workflow/gen/workflowpb/v1"
 	"go.temporal.io/server/common/callbacks"
-	"go.temporal.io/server/service/history/historybuilder"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -341,7 +340,7 @@ func (w *Workflow) HasIncomingSignalEvent(_ chasm.Context, requestID string) boo
 }
 
 // HasAnyBufferedEvent returns true if the workflow has any buffered event matching the given filter.
-func (w *Workflow) HasAnyBufferedEvent(filter historybuilder.BufferedEventFilter) bool {
+func (w *Workflow) HasAnyBufferedEvent(filter func(*historypb.HistoryEvent) bool) bool {
 	return w.MSPointer.HasAnyBufferedEvent(filter)
 }
 
