@@ -48,8 +48,9 @@ var _ chasm.DescribableComponent = (*Activity)(nil)
 var _ callback.Host = (*Activity)(nil)
 
 type ActivityStore interface {
-	// RecordCompleted applies the provided function to record activity completion
-	RecordCompleted(ctx chasm.MutableContext, applyFn func(ctx chasm.MutableContext) error) error
+	// RecordCompleted applies the provided function to record completion of activity a. A store
+	// that holds several activities uses a to tell which one completed.
+	RecordCompleted(ctx chasm.MutableContext, a *Activity, applyFn func(ctx chasm.MutableContext) error) error
 }
 
 // Activity component represents an activity execution persistence object and can be either standalone activity or one
@@ -318,7 +319,7 @@ func (a *Activity) GenerateRecordActivityTaskStartedResponse(
 
 // RecordCompleted applies the provided function to record activity completion.
 // For standalone activities, it also triggers any registered completion callbacks.
-func (a *Activity) RecordCompleted(ctx chasm.MutableContext, applyFn func(ctx chasm.MutableContext) error) error {
+func (a *Activity) RecordCompleted(ctx chasm.MutableContext, _ *Activity, applyFn func(ctx chasm.MutableContext) error) error {
 	if err := applyFn(ctx); err != nil {
 		return err
 	}

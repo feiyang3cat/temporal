@@ -518,7 +518,7 @@ func (a *Activity) applyStarted(ctx chasm.MutableContext, request *historyservic
 }
 
 func (a *Activity) applyCompleted(ctx chasm.MutableContext, event completeEvent) error {
-	return a.StoreOrSelf(ctx).RecordCompleted(ctx, func(ctx chasm.MutableContext) error {
+	return a.StoreOrSelf(ctx).RecordCompleted(ctx, a, func(ctx chasm.MutableContext) error {
 		req := event.req.GetCompleteRequest()
 
 		attemptWasStarted := a.hasAttemptInProgress()
@@ -549,7 +549,7 @@ func (a *Activity) applyCompleted(ctx chasm.MutableContext, event completeEvent)
 // Not to be confused with applyFailedAttempt/recordFailedAttempt, which record the
 // failure of a single attempt that may still be retried.
 func (a *Activity) applyFailed(ctx chasm.MutableContext, event failedEvent) error {
-	return a.StoreOrSelf(ctx).RecordCompleted(ctx, func(ctx chasm.MutableContext) error {
+	return a.StoreOrSelf(ctx).RecordCompleted(ctx, a, func(ctx chasm.MutableContext) error {
 		req := event.req.GetFailedRequest()
 		a.Outcome.Get(ctx).RetryState = event.retryState
 
@@ -575,7 +575,7 @@ func (a *Activity) applyFailed(ctx chasm.MutableContext, event failedEvent) erro
 }
 
 func (a *Activity) applyTerminated(ctx chasm.MutableContext, event terminateEvent) error {
-	return a.StoreOrSelf(ctx).RecordCompleted(ctx, func(ctx chasm.MutableContext) error {
+	return a.StoreOrSelf(ctx).RecordCompleted(ctx, a, func(ctx chasm.MutableContext) error {
 		a.TerminateState = &activitypb.ActivityTerminateState{
 			RequestId: event.request.RequestID,
 		}
@@ -615,7 +615,7 @@ func (a *Activity) applyCancelRequested(ctx chasm.MutableContext, req *workflows
 }
 
 func (a *Activity) applyCanceled(ctx chasm.MutableContext, event cancelEvent) error {
-	return a.StoreOrSelf(ctx).RecordCompleted(ctx, func(ctx chasm.MutableContext) error {
+	return a.StoreOrSelf(ctx).RecordCompleted(ctx, a, func(ctx chasm.MutableContext) error {
 		outcome := a.Outcome.Get(ctx)
 		failure := &failurepb.Failure{
 			Message: "Activity canceled",
@@ -641,7 +641,7 @@ func (a *Activity) applyCanceled(ctx chasm.MutableContext, event cancelEvent) er
 func (a *Activity) applyTimedOut(ctx chasm.MutableContext, event timeoutEvent) error {
 	timeoutType := event.timeoutType
 
-	return a.StoreOrSelf(ctx).RecordCompleted(ctx, func(ctx chasm.MutableContext) error {
+	return a.StoreOrSelf(ctx).RecordCompleted(ctx, a, func(ctx chasm.MutableContext) error {
 		a.Outcome.Get(ctx).RetryState = event.retryState
 		priorAttemptFailure := a.LastAttempt.Get(ctx).GetLastFailureDetails().GetFailure()
 		var err error
