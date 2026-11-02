@@ -4974,7 +4974,8 @@ func (wh *WorkflowHandler) PatchSchedule(
 		if err == nil {
 			return res, nil
 		}
-		if !isSchedulerErrorLegacyRoutable(err) {
+		// Time-skipping patches cannot fall back to workflow-backed schedules.
+		if request.Patch.GetTimeSkippingConfig() != nil || !isSchedulerErrorLegacyRoutable(err) {
 			return nil, err
 		}
 	}

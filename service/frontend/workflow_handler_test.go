@@ -41,6 +41,8 @@ import (
 	taskqueuespb "go.temporal.io/server/api/taskqueue/v1"
 	tokenspb "go.temporal.io/server/api/token/v1"
 	"go.temporal.io/server/chasm/lib/nexusoperation"
+	chasmscheduler "go.temporal.io/server/chasm/lib/scheduler"
+	schedulerpb "go.temporal.io/server/chasm/lib/scheduler/gen/schedulerpb/v1"
 	"go.temporal.io/server/chasm/lib/workflow"
 	"go.temporal.io/server/common"
 	"go.temporal.io/server/common/archiver"
@@ -4472,6 +4474,87 @@ func (s *WorkflowHandlerSuite) TestCreatePatchSchedule_TimeSkippingRoutingValida
 				},
 			})
 			s.Require().ErrorIs(err, errScheduleTimeSkippingNotEnabled)
+		})
+	}
+}
+
+type patchScheduleErrorClient struct {
+	schedulerpb.SchedulerServiceClient
+	err error
+}
+
+func (c *patchScheduleErrorClient) PatchSchedule(context.Context, *schedulerpb.PatchScheduleRequest, ...grpc.CallOption) (*schedulerpb.PatchScheduleResponse, error) {
+	return nil, c.err
+}
+
+func (s *WorkflowHandlerSuite) TestPatchScheduleTimeSkippingErrors() {
+	for _, tc := range []struct {
+		name           string
+		config         *commonpb.TimeSkippingConfig
+		schedulerError error
+		fallback       bool
+	}{
+		{
+			name: "enable missing schedule",
+			config: &commonpb.TimeSkippingConfig{
+				Enabled: true,
+				FastForwardConfig: &commonpb.FastForwardConfig{
+					Id: "fast-forward-id", Duration: durationpb.New(time.Hour),
+				},
+			},
+			schedulerError: serviceerror.NewNotFound("schedule not found"),
+		},
+		{
+			name:           "disable missing schedule",
+			config:         &commonpb.TimeSkippingConfig{Enabled: false},
+			schedulerError: serviceerror.NewNotFound("schedule not found"),
+		},
+		{
+			name:           "closed schedule",
+			config:         &commonpb.TimeSkippingConfig{Enabled: false},
+			schedulerError: chasmscheduler.ErrClosed,
+		},
+		{
+			name:           "scheduler unavailable",
+			config:         &commonpb.TimeSkippingConfig{Enabled: false},
+			schedulerError: serviceerror.NewUnavailable("scheduler unavailable"),
+		},
+		{
+			name:           "ordinary patch falls back to legacy schedule",
+			schedulerError: serviceerror.NewNotFound("schedule not found"),
+			fallback:       true,
+		},
+	} {
+		s.Run(tc.name, func() {
+			t := s.T()
+			config := s.newConfig()
+			config.EnableSchedules = dc.GetBoolPropertyFnFilteredByNamespace(true)
+			config.EnableCHASMSchedulerRouting = dc.GetBoolPropertyFnFilteredByNamespace(true)
+			config.WorkflowTimeSkippingEnabled = dc.GetBoolPropertyFnFilteredByNamespace(true)
+			config.CHASMSchedulerTimeSkippingEnabled = dc.GetBoolPropertyFnFilteredByNamespace(true)
+			wh := s.getWorkflowHandler(config)
+			wh.schedulerClient = &patchScheduleErrorClient{err: tc.schedulerError}
+			s.mockNamespaceCache.EXPECT().GetNamespaceID(s.testNamespace).Return(s.testNamespaceID, nil).AnyTimes()
+			if tc.fallback {
+				s.mockHistoryClient.EXPECT().SignalWorkflowExecution(gomock.Any(), gomock.Any()).
+					Return(&historyservice.SignalWorkflowExecutionResponse{}, nil)
+			}
+
+			resp, err := wh.PatchSchedule(t.Context(), &workflowservice.PatchScheduleRequest{
+				Namespace:  s.testNamespace.String(),
+				ScheduleId: "schedule-id",
+				Patch: &schedulepb.SchedulePatch{
+					TimeSkippingConfig: tc.config,
+					Pause:              "test pause",
+				},
+			})
+			if tc.fallback {
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+			} else {
+				require.ErrorIs(t, err, tc.schedulerError)
+				require.Nil(t, resp)
+			}
 		})
 	}
 }
