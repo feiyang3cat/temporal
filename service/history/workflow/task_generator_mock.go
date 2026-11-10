@@ -46,6 +46,20 @@ func (m *MockTaskGenerator) EXPECT() *MockTaskGeneratorMockRecorder {
 	return m.recorder
 }
 
+// GenerateActivityRetryRelatedTasks mocks base method.
+func (m *MockTaskGenerator) GenerateActivityRetryRelatedTasks(activityInfo *persistence.ActivityInfo) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GenerateActivityRetryRelatedTasks", activityInfo)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// GenerateActivityRetryRelatedTasks indicates an expected call of GenerateActivityRetryRelatedTasks.
+func (mr *MockTaskGeneratorMockRecorder) GenerateActivityRetryRelatedTasks(activityInfo any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GenerateActivityRetryRelatedTasks", reflect.TypeOf((*MockTaskGenerator)(nil).GenerateActivityRetryRelatedTasks), activityInfo)
+}
+
 // GenerateActivityRetryTasks mocks base method.
 func (m *MockTaskGenerator) GenerateActivityRetryTasks(activityInfo *persistence.ActivityInfo) error {
 	m.ctrl.T.Helper()

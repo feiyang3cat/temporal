@@ -63,6 +63,9 @@ type (
 			activityScheduledEventID int64,
 		) error
 		GenerateActivityRetryTasks(activityInfo *persistencespb.ActivityInfo) error
+		// GenerateActivityRetryRelatedTasks re-stamps a retry timer and the earliest timeout
+		// for this activity using the current time-skipping offset.
+		GenerateActivityRetryRelatedTasks(activityInfo *persistencespb.ActivityInfo) error
 		GenerateWorkerCommandsTasks(commands []*workerpb.WorkerCommand, controlQueue string) error
 		GenerateChildWorkflowTasks(
 			childInitiatedEventId int64,
@@ -608,6 +611,31 @@ func (r *TaskGeneratorImpl) GenerateActivityRetryTasks(activityInfo *persistence
 	return nil
 }
 
+func (r *TaskGeneratorImpl) GenerateActivityRetryRelatedTasks(activityInfo *persistencespb.ActivityInfo) error {
+	// Other deadlines must remain eligible for creation after the earliest timer fires.
+	if activityInfo.TimerTaskStatus != TimerTaskStatusNone {
+		if err := r.mutableState.UpdateActivityTaskStatusWithTimerHeartbeat(activityInfo.ScheduledEventId, TimerTaskStatusNone, nil); err != nil {
+			return err
+		}
+	}
+	if err := r.GenerateActivityRetryTasks(activityInfo); err != nil {
+		return err
+	}
+	timers := appendActivityTimers(nil, activityInfo)
+	if len(timers) == 0 {
+		return nil
+	}
+	firstTimer := timers[0]
+	for _, timer := range timers[1:] {
+		if timer.Timestamp.Before(firstTimer.Timestamp) ||
+			(timer.Timestamp.Equal(firstTimer.Timestamp) && timer.TimerType < firstTimer.TimerType) {
+			firstTimer = timer
+		}
+	}
+	_, err := NewTimerSequence(r.mutableState).createActivityTimer(firstTimer)
+	return err
+}
+
 func (r *TaskGeneratorImpl) GenerateWorkerCommandsTasks(commands []*workerpb.WorkerCommand, controlQueue string) error {
 	if !r.config.EnableCancelActivityWorkerCommand(r.mutableState.GetNamespaceEntry().Name().String()) {
 		return nil
@@ -1091,7 +1119,7 @@ func (r *TaskGeneratorImpl) RegenerateTimerTasksForTimeSkipping() error {
 	// WorkflowTask and HSM(only nexusoperations) timer tasks won't be regenerated
 	// because time skipping pauses when there is in-flight work. Activity retry
 	// timers are the exception: an activity in retry backoff does not block skipping,
-	// so its retry timer must be re-stamped against the new accumulated skip (see (5)).
+	// so its retry and timeout timers must be re-stamped against the new accumulated skip (see (5)).
 	//
 	// NOTE: blocks (1)-(4) below construct their tasks inline rather than calling the
 	// canonical generators (GenerateUserTimerTasks, GenerateWorkflowStartTasks,
@@ -1181,14 +1209,14 @@ func (r *TaskGeneratorImpl) RegenerateTimerTasksForTimeSkipping() error {
 	// the idle gate already ensures every pending activity is a failed retry when we get here.
 	for _, ai := range r.mutableState.GetPendingActivityInfos() {
 		if activityPendingRetry(ai) {
-			if err := r.GenerateActivityRetryTasks(ai); err != nil {
+			if err := r.GenerateActivityRetryRelatedTasks(ai); err != nil {
 				return err
 			}
 		}
 	}
 
-	// Generic StateMachineTimerTask (nexus HSM), WorkflowTaskTimeoutTask, and ActivityTimeoutTask
-	// are treated as a part of in-flight nexus operation and won't be regenerated.
+	// Generic StateMachineTimerTask (nexus HSM) and WorkflowTaskTimeoutTask
+	// are treated as in-flight work and won't be regenerated.
 	// DeleteHistoryEventTask is not impacted by time skipping, and doesn't need regeneration.
 	return nil
 }

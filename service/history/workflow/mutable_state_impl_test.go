@@ -8687,6 +8687,142 @@ func (s *mutableStateSuite) TestAddTasks_SubtractsSkipFromTimerTasks() {
 	s.Equal(virtualTime, inserted[tasks.CategoryTransfer][0].GetVisibilityTime())
 }
 
+func (s *mutableStateSuite) TestRegenerateActivityTimeoutAfterTimeSkipping() {
+	physicalNow := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	s.mutableState.timeSource = clock.NewEventTimeSource().Update(physicalNow)
+	deadline := physicalNow.Add(time.Hour)
+	ai := &persistencespb.ActivityInfo{
+		ScheduledEventId:       5,
+		FirstScheduledTime:     timestamppb.New(physicalNow),
+		ScheduledTime:          timestamppb.New(physicalNow.Add(30 * time.Minute)),
+		ScheduleToCloseTimeout: durationpb.New(time.Hour),
+		HasRetryPolicy:         true,
+		Attempt:                2,
+		Stamp:                  7,
+		TimerTaskStatus:        TimerTaskStatusCreatedScheduleToClose,
+	}
+	s.mutableState.pendingActivityInfoIDs[ai.ScheduledEventId] = ai
+	s.mutableState.AddTasks(&tasks.ActivityTimeoutTask{
+		WorkflowKey:         s.mutableState.GetWorkflowKey(),
+		VisibilityTimestamp: deadline,
+		TimeoutType:         enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
+		EventID:             ai.ScheduledEventId,
+		Attempt:             ai.Attempt,
+		Stamp:               ai.Stamp,
+	})
+	originalTasks := s.mutableState.PopTasks()
+
+	const skipped = 30 * time.Minute
+	s.mutableState.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
+		AccumulatedSkippedDuration: durationpb.New(skipped),
+	}
+	s.mutableState.wrapTimeSourceWithTimeSkipping()
+	generator := NewTaskGenerator(nil, nil, s.mutableState, s.mockConfig, nil, s.logger)
+	s.NoError(generator.RegenerateTimerTasksForTimeSkipping())
+	s.Equal(map[tasks.Category][]tasks.Task{
+		tasks.CategoryTimer: {
+			&tasks.ActivityRetryTimerTask{
+				WorkflowKey:         s.mutableState.GetWorkflowKey(),
+				VisibilityTimestamp: physicalNow,
+				EventID:             ai.ScheduledEventId,
+				Attempt:             ai.Attempt,
+				Stamp:               ai.Stamp,
+			},
+			&tasks.ActivityTimeoutTask{
+				WorkflowKey:         s.mutableState.GetWorkflowKey(),
+				VisibilityTimestamp: deadline.Add(-skipped),
+				TimeoutType:         enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
+				EventID:             ai.ScheduledEventId,
+				Attempt:             ai.Attempt,
+				Stamp:               ai.Stamp,
+			},
+		},
+	}, s.mutableState.PopTasks())
+	s.Equal(deadline, originalTasks[tasks.CategoryTimer][0].GetVisibilityTime())
+	s.Equal(int32(TimerTaskStatusCreatedScheduleToClose), ai.TimerTaskStatus)
+}
+
+func (s *mutableStateSuite) TestRegenerateActivityTimeoutsCreatesOnePerRetry() {
+	physicalNow := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	const skipped = 30 * time.Minute
+	s.mutableState.timeSource = clock.NewEventTimeSource().Update(physicalNow)
+	s.mutableState.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
+		AccumulatedSkippedDuration: durationpb.New(skipped),
+	}
+	s.mutableState.wrapTimeSourceWithTimeSkipping()
+	var expected []tasks.Task
+	for eventID := int64(1); eventID <= 3; eventID++ {
+		ai := &persistencespb.ActivityInfo{
+			ScheduledEventId:       eventID,
+			FirstScheduledTime:     timestamppb.New(physicalNow),
+			ScheduledTime:          timestamppb.New(physicalNow.Add(skipped)),
+			ScheduleToCloseTimeout: durationpb.New(time.Duration(eventID) * time.Hour),
+			ScheduleToStartTimeout: durationpb.New(4 * time.Hour),
+			HasRetryPolicy:         true,
+			Attempt:                2,
+			Stamp:                  7,
+			TimerTaskStatus:        TimerTaskStatusCreatedScheduleToClose | TimerTaskStatusCreatedScheduleToStart,
+		}
+		s.mutableState.pendingActivityInfoIDs[eventID] = ai
+		expected = append(expected,
+			&tasks.ActivityRetryTimerTask{
+				WorkflowKey:         s.mutableState.GetWorkflowKey(),
+				VisibilityTimestamp: physicalNow,
+				EventID:             eventID,
+				Attempt:             ai.Attempt,
+				Stamp:               ai.Stamp,
+			},
+			&tasks.ActivityTimeoutTask{
+				WorkflowKey:         s.mutableState.GetWorkflowKey(),
+				VisibilityTimestamp: physicalNow.Add(time.Duration(eventID)*time.Hour - skipped),
+				TimeoutType:         enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
+				EventID:             eventID,
+				Attempt:             ai.Attempt,
+				Stamp:               ai.Stamp,
+			},
+		)
+	}
+	generator := NewTaskGenerator(nil, nil, s.mutableState, s.mockConfig, nil, s.logger)
+	s.NoError(generator.RegenerateTimerTasksForTimeSkipping())
+	s.ElementsMatch(expected, s.mutableState.PopTasks()[tasks.CategoryTimer])
+	for _, ai := range s.mutableState.pendingActivityInfoIDs {
+		s.Equal(int32(TimerTaskStatusCreatedScheduleToClose), ai.TimerTaskStatus)
+	}
+}
+
+func (s *mutableStateSuite) TestRegenerateActivityTimeoutsSkipsNonRetryActivities() {
+	for _, tc := range []struct {
+		name    string
+		attempt int32
+		started int64
+		paused  bool
+	}{
+		{name: "initial attempt", attempt: 1},
+		{name: "running activity", attempt: 2, started: 10},
+		{name: "paused activity", attempt: 2, paused: true},
+	} {
+		s.Run(tc.name, func() {
+			s.mutableState.executionInfo.TimeSkippingInfo = &persistencespb.TimeSkippingInfo{
+				AccumulatedSkippedDuration: durationpb.New(time.Hour),
+			}
+			ai := &persistencespb.ActivityInfo{
+				ScheduledEventId:       5,
+				StartedEventId:         tc.started,
+				ScheduleToCloseTimeout: durationpb.New(time.Hour),
+				HasRetryPolicy:         true,
+				Attempt:                tc.attempt,
+				Paused:                 tc.paused,
+				TimerTaskStatus:        TimerTaskStatusCreatedScheduleToClose,
+			}
+			s.mutableState.pendingActivityInfoIDs[ai.ScheduledEventId] = ai
+			generator := NewTaskGenerator(nil, nil, s.mutableState, s.mockConfig, nil, s.logger)
+			s.NoError(generator.RegenerateTimerTasksForTimeSkipping())
+			s.Empty(s.mutableState.PopTasks())
+			s.Equal(int32(TimerTaskStatusCreatedScheduleToClose), ai.TimerTaskStatus)
+		})
+	}
+}
+
 // TestAddCompletedWorkflowEvent_ArchivalConvertsVirtualToWall exercises the full
 // close→archival path end-to-end: starting a workflow with accumulated skip
 // installs the time-skipping wrapper on the MS time source, the close event is

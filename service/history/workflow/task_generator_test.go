@@ -1989,6 +1989,79 @@ func TestTaskGeneratorImpl_RegenerateTimerTasksForTimeSkipping_BackoffTimer(t *t
 	}
 }
 
+func TestGenerateActivityRetryRelatedTasks(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name            string
+		scheduleToClose time.Duration
+		scheduleToStart time.Duration
+		runTimeout      time.Duration
+		timeoutType     enumspb.TimeoutType
+		deadline        time.Time
+	}{
+		{name: "schedule to close", scheduleToClose: time.Hour, timeoutType: enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, deadline: now.Add(time.Hour)},
+		{name: "schedule to start is earlier", scheduleToClose: time.Hour, scheduleToStart: time.Minute, timeoutType: enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START, deadline: now.Add(31 * time.Minute)},
+		{name: "no timeout configured"},
+		{name: "workflow expires first", scheduleToClose: time.Hour, runTimeout: 45 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctrl := gomock.NewController(t)
+			ms := historyi.NewMockMutableState(ctrl)
+			info := &persistencespb.WorkflowExecutionInfo{}
+			if tc.runTimeout != 0 {
+				info.WorkflowRunExpirationTime = timestamppb.New(now.Add(tc.runTimeout))
+			}
+			ms.EXPECT().GetExecutionInfo().Return(info).AnyTimes()
+			ms.EXPECT().GetWorkflowKey().Return(tests.WorkflowKey).AnyTimes()
+			ai := &persistencespb.ActivityInfo{
+				ScheduledEventId:       5,
+				FirstScheduledTime:     timestamppb.New(now),
+				ScheduledTime:          timestamppb.New(now.Add(30 * time.Minute)),
+				ScheduleToCloseTimeout: durationpb.New(tc.scheduleToClose),
+				ScheduleToStartTimeout: durationpb.New(tc.scheduleToStart),
+				Attempt:                2,
+				Stamp:                  7,
+				Version:                42,
+				TimerTaskStatus:        TimerTaskStatusCreatedScheduleToClose | TimerTaskStatusCreatedScheduleToStart,
+			}
+			// The helper must only look up this activity, without scanning all pending activities.
+			ms.EXPECT().GetActivityInfo(ai.ScheduledEventId).Return(ai, true).AnyTimes()
+			ms.EXPECT().UpdateActivityTaskStatusWithTimerHeartbeat(ai.ScheduledEventId, gomock.Any(), nil).
+				DoAndReturn(func(_ int64, status int32, _ *time.Time) error {
+					ai.TimerTaskStatus = status
+					return nil
+				}).AnyTimes()
+			var generated []tasks.Task
+			ms.EXPECT().AddTasks(gomock.Any()).Do(func(ts ...tasks.Task) {
+				generated = append(generated, ts...)
+			}).AnyTimes()
+			generator := NewTaskGenerator(nil, nil, ms, nil, nil, nil)
+			require.NoError(t, generator.GenerateActivityRetryRelatedTasks(ai))
+			expected := []tasks.Task{&tasks.ActivityRetryTimerTask{
+				WorkflowKey:         tests.WorkflowKey,
+				VisibilityTimestamp: ai.ScheduledTime.AsTime(),
+				Version:             ai.Version,
+				EventID:             ai.ScheduledEventId,
+				Attempt:             ai.Attempt,
+				Stamp:               ai.Stamp,
+			}}
+			if tc.timeoutType != enumspb.TIMEOUT_TYPE_UNSPECIFIED {
+				expected = append(expected, &tasks.ActivityTimeoutTask{
+					WorkflowKey:         tests.WorkflowKey,
+					VisibilityTimestamp: tc.deadline,
+					TimeoutType:         tc.timeoutType,
+					EventID:             ai.ScheduledEventId,
+					Attempt:             ai.Attempt,
+					Stamp:               ai.Stamp,
+				})
+			}
+			require.Equal(t, expected, generated)
+		})
+	}
+}
+
 // TestTaskGeneratorImpl_RegenerateTimerTasksForTimeSkipping_ActivityRetry covers step (5):
 // activity retry timers are re-stamped only for activities in retry backoff, so their
 // wall-clock firing time tracks the new accumulated skip. Activities that are started

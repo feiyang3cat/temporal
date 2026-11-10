@@ -122,7 +122,10 @@ func (t *timerSequenceImpl) CreateNextActivityTimer() (bool, error) {
 		return false, nil
 	}
 
-	firstTimerTask := sequenceIDs[0]
+	return t.createActivityTimer(sequenceIDs[0])
+}
+
+func (t *timerSequenceImpl) createActivityTimer(firstTimerTask TimerSequenceID) (bool, error) {
 
 	// activity timer after workflow timeout, skip
 	execInfo := t.mutableState.GetExecutionInfo()
@@ -185,37 +188,28 @@ func (t *timerSequenceImpl) LoadAndSortActivityTimers() []TimerSequenceID {
 	activityTimers := make(TimerSequenceIDs, 0, len(pendingActivities)*4)
 
 	for _, activityInfo := range pendingActivities {
-		// skip activities that are paused
-		if activityInfo.Paused {
-			continue
-		}
-		if sequenceID, ok := t.getActivityScheduleToCloseTimeout(
-			activityInfo,
-		); ok {
-			activityTimers = append(activityTimers, sequenceID)
-		}
-
-		if sequenceID, ok := t.getActivityScheduleToStartTimeout(
-			activityInfo,
-		); ok {
-			activityTimers = append(activityTimers, sequenceID)
-		}
-
-		if sequenceID, ok := t.getActivityStartToCloseTimeout(
-			activityInfo,
-		); ok {
-			activityTimers = append(activityTimers, sequenceID)
-		}
-
-		if sequenceID, ok := t.getActivityHeartbeatTimeout(
-			activityInfo,
-		); ok {
-			activityTimers = append(activityTimers, sequenceID)
-		}
+		activityTimers = appendActivityTimers(activityTimers, activityInfo)
 	}
 
 	sort.Sort(activityTimers)
 	return activityTimers
+}
+
+func appendActivityTimers(timers TimerSequenceIDs, activityInfo *persistencespb.ActivityInfo) TimerSequenceIDs {
+	if activityInfo.Paused {
+		return timers
+	}
+	for _, getTimeout := range [4]func(*persistencespb.ActivityInfo) (TimerSequenceID, bool){
+		getActivityScheduleToCloseTimeout,
+		getActivityScheduleToStartTimeout,
+		getActivityStartToCloseTimeout,
+		getActivityHeartbeatTimeout,
+	} {
+		if timer, ok := getTimeout(activityInfo); ok {
+			timers = append(timers, timer)
+		}
+	}
+	return timers
 }
 
 func (t *timerSequenceImpl) getUserTimerTimeout(
