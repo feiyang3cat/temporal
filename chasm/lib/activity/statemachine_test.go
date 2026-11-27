@@ -734,7 +734,7 @@ func TestTransitionTimedOutRetryWindowExhaustedChainsPriorFailure(t *testing.T) 
 
 			// The caller sees ScheduleToClose as the terminal timeout, with the application failure
 			// from the preceding attempt—not the newly recorded per-attempt timeout—as its cause.
-			terminal := activity.TerminalFailure(ctx)
+			terminal := activity.terminalFailure(ctx)
 			require.Equal(t, enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE, terminal.GetTimeoutFailureInfo().GetTimeoutType())
 			protorequire.ProtoEqual(t, priorFailure, terminal.GetCause())
 		})
