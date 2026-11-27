@@ -12,7 +12,7 @@ import (
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/metrics"
 	"go.temporal.io/server/common/namespace"
-	"go.temporal.io/server/common/resource"
+	"go.temporal.io/server/common/resource/serviceclient"
 	"go.temporal.io/server/common/workercommands"
 	"go.temporal.io/server/service/history/configs"
 	"go.temporal.io/server/service/history/tasks"
@@ -33,7 +33,7 @@ type workerCommandDispatchTaskHandler struct {
 type workerCommandDispatchTaskHandlerOptions struct {
 	fx.In
 
-	MatchingClient    resource.MatchingClient
+	MatchingClient    serviceclient.MatchingClient
 	NamespaceRegistry namespace.Registry
 	Config            *configs.Config
 	MetricsHandler    metrics.Handler

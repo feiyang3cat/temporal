@@ -178,11 +178,12 @@ func (e *engine) advanceTime(ctx context.Context, now time.Time) error {
 			return err
 		}
 		ran := false
-		if err := x.node.EachPureTask(now, func(handler chasm.NodePureTask, attrs chasm.TaskAttributes, task any) (bool, error) {
+		err := x.node.EachPureTask(now, func(handler chasm.NodePureTask, attrs chasm.TaskAttributes, task any) (bool, error) {
 			executed, err := handler.ExecutePureTask(ctx, attrs, task)
 			ran = ran || executed
 			return executed, err
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
 		if !ran {
@@ -199,7 +200,7 @@ func (e *engine) advanceTime(ctx context.Context, now time.Time) error {
 }
 
 func (e *engine) closeTransaction(ctx context.Context, x *execution) error {
-	mutation, err := x.node.CloseTransaction()
+	mutation, err := x.node.CloseTransaction(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -261,9 +262,10 @@ func (e *engine) runSideEffectTasks(ctx context.Context, x *execution) error {
 		if !inTree || !valid {
 			continue
 		}
-		if err := x.node.ExecuteSideEffectTask(engineCtx, x.key, task, func(chasm.NodeBackend, chasm.Context, chasm.Component) error {
+		err = x.node.ExecuteSideEffectTask(engineCtx, x.key, task, func(chasm.NodeBackend, chasm.Context, chasm.Component) error {
 			return nil
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("side effect task: %w", err)
 		}
 	}
@@ -371,7 +373,7 @@ func (b *backend) ChasmDLQScheduledPureTaskOnValidationEnabled() bool { return f
 func (b *backend) GetNamespaceEntry() *namespace.Namespace            { return b.namespace }
 func (b *backend) GetCurrentVersion() int64                           { return 1 }
 func (b *backend) NextTransitionCount() int64                         { return b.transitionCount + 1 }
-func (b *backend) DeleteCHASMPureTasks(before time.Time) {
+func (b *backend) DeletePhysicalCHASMPureTasks(before time.Time) {
 	b.pureTaskTimes = slices.DeleteFunc(b.pureTaskTimes, func(t time.Time) bool { return t.Before(before) })
 }
 func (b *backend) IsWorkflow() bool                                           { return false }
@@ -435,3 +437,7 @@ func (b *backend) GetNexusCompletion(context.Context, string) (nexusrpc.Complete
 func (b *backend) GetNexusUpdateCompletion(context.Context, string, string) (nexusrpc.CompleteOperationOptions, error) {
 	return nexusrpc.CompleteOperationOptions{}, serviceerror.NewUnimplemented("GetNexusUpdateCompletion")
 }
+
+func (b *backend) ChasmLogicalTaskCountAlertThreshold(string) int      { return 0 }
+func (b *backend) IsTimeSkippingFeatureEnabled(chasm.ArchetypeID) bool { return false }
+func (b *backend) TimeSkippingMaxAccumulatedDuration() time.Duration   { return 0 }

@@ -17,7 +17,7 @@ import (
 	"go.temporal.io/server/common/log/tag"
 	"go.temporal.io/server/common/metrics"
 	commonnexus "go.temporal.io/server/common/nexus"
-	"go.temporal.io/server/common/resource"
+	"go.temporal.io/server/common/resource/serviceclient"
 	"go.temporal.io/server/service/history/configs"
 	"go.temporal.io/server/service/history/tasks"
 	"google.golang.org/protobuf/proto"
@@ -48,14 +48,14 @@ const (
 // These commands are best-effort — the activity will eventually time out anyway —
 // so excessive retries waste resources.
 type Dispatcher struct {
-	matchingClient resource.MatchingClient
+	matchingClient serviceclient.MatchingClient
 	config         *configs.Config
 	metricsHandler metrics.Handler
 	logger         log.Logger
 }
 
 func NewDispatcher(
-	matchingClient resource.MatchingClient,
+	matchingClient serviceclient.MatchingClient,
 	config *configs.Config,
 	metricsHandler metrics.Handler,
 	logger log.Logger,

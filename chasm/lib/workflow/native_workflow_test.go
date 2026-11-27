@@ -69,7 +69,7 @@ func newNativeTestEnv(t *testing.T) *nativeTestEnv {
 
 func (env *nativeTestEnv) update(fn func(ctx chasm.MutableContext)) {
 	fn(chasm.NewMutableContext(context.Background(), env.node))
-	_, err := env.node.CloseTransaction()
+	_, err := env.node.CloseTransaction(context.Background(), true)
 	require.NoError(env.t, err)
 }
 
@@ -240,7 +240,7 @@ func TestNativeWorkflow_TimerFires(t *testing.T) {
 	require.NoError(t, env.node.EachPureTask(env.now, func(handler chasm.NodePureTask, attrs chasm.TaskAttributes, task any) (bool, error) {
 		return handler.ExecutePureTask(context.Background(), attrs, task)
 	}))
-	_, err := env.node.CloseTransaction()
+	_, err := env.node.CloseTransaction(context.Background(), true)
 	require.NoError(t, err)
 	types := env.eventTypes()
 	require.Equal(t, []enumspb.EventType{

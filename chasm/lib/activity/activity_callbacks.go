@@ -57,7 +57,7 @@ func (a *Activity) GetNexusCompletion(ctx chasm.Context, _ string) (nexusrpc.Com
 		return opts, nil
 	}
 
-	failure := a.terminalFailure(ctx)
+	failure := a.TerminalFailure(ctx)
 	if failure != nil {
 		state := nexus.OperationStateFailed
 		message := "operation failed"

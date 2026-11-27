@@ -81,7 +81,7 @@ func (h *activityCommandHandler) normalizeAttributes(
 		HeartbeatTimeout:       attrs.GetHeartbeatTimeout(),
 		RetryPolicy:            attrs.RetryPolicy,
 	}
-	if err := activity.ValidateAndNormalizeEmbeddedActivity(
+	err := activity.ValidateAndNormalizeEmbeddedActivity(
 		attrs.GetActivityId(),
 		attrs.GetActivityType().GetName(),
 		h.config.defaultActivityRetrySettings,
@@ -91,7 +91,8 @@ func (h *activityCommandHandler) normalizeAttributes(
 		attrs.GetPriority(),
 		durationpb.New(wf.runTimeout(ctx)),
 		wf.taskQueue(ctx),
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 	attrs.TaskQueue = options.TaskQueue

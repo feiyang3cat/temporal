@@ -129,7 +129,7 @@ func (env *componentTestEnv) context() context.Context {
 // update runs fn in a transaction on the tree.
 func (env *componentTestEnv) update(fn func(ctx chasm.MutableContext)) {
 	fn(chasm.NewMutableContext(env.context(), env.node))
-	_, err := env.node.CloseTransaction()
+	_, err := env.node.CloseTransaction(env.context(), true)
 	require.NoError(env.t, err)
 }
 
@@ -152,7 +152,7 @@ func (env *componentTestEnv) runPureTasks(now time.Time) {
 	require.NoError(env.t, env.node.EachPureTask(now, func(handler chasm.NodePureTask, attrs chasm.TaskAttributes, task any) (bool, error) {
 		return handler.ExecutePureTask(env.context(), attrs, task)
 	}))
-	_, err := env.node.CloseTransaction()
+	_, err := env.node.CloseTransaction(env.context(), true)
 	require.NoError(env.t, err)
 }
 

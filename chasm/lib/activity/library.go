@@ -121,6 +121,7 @@ func NewLibrary(matchingClient serviceclient.MatchingClient, config *Config) cha
 	return newLibrary(
 		nil,
 		newActivityDispatchTaskHandler(activityDispatchTaskHandlerOptions{MatchingClient: matchingClient}),
+		nil, // The local server does not expose the worker control queue.
 		newScheduleToStartTimeoutTaskHandler(),
 		newScheduleToCloseTimeoutTaskHandler(),
 		newStartToCloseTimeoutTaskHandler(),
