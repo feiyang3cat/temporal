@@ -167,6 +167,7 @@ var Module = fx.Options(
 	chasmcallback.Module,
 	namespacereplication.Module,
 	activity.FrontendModule,
+	fx.Provide(resource.SearchAttributeValidatorProvider),
 	fx.Provide(visibility.ChasmVisibilityManagerProvider),
 	fx.Provide(chasm.ChasmVisibilityInterceptorProvider),
 )

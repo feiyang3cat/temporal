@@ -20,6 +20,7 @@ type Config struct {
 	workflowTimeSkippingEnabled        dynamicconfig.BoolPropertyFnWithNamespaceFilter
 	timeSkippingMaxSkipPerSession      dynamicconfig.IntPropertyFnWithNamespaceFilter
 	timeSkippingMaxAccumulatedDuration dynamicconfig.DurationPropertyFn
+	defaultActivityRetrySettings       dynamicconfig.TypedPropertyFnWithNamespaceFilter[retrypolicy.DefaultRetrySettings]
 }
 
 func NewConfig(dc *dynamicconfig.Collection) Config {
@@ -30,5 +31,6 @@ func NewConfig(dc *dynamicconfig.Collection) Config {
 		workflowTimeSkippingEnabled:        dynamicconfig.WorkflowTimeSkippingEnabled.Get(dc),
 		timeSkippingMaxSkipPerSession:      dynamicconfig.TimeSkippingMaxSkipPerSession.Get(dc),
 		timeSkippingMaxAccumulatedDuration: dynamicconfig.TimeSkippingMaxAccumulatedDuration.Get(dc),
+		defaultActivityRetrySettings:       dynamicconfig.DefaultActivityRetryPolicy.Get(dc),
 	}
 }

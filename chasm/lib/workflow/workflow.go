@@ -6,11 +6,12 @@ import (
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/server/chasm"
+	"go.temporal.io/server/chasm/lib/activity"
 	"go.temporal.io/server/chasm/lib/callback"
 	"go.temporal.io/server/chasm/lib/nexusoperation"
+	"go.temporal.io/server/chasm/lib/timer"
 	chasmworkflowpb "go.temporal.io/server/chasm/lib/workflow/gen/workflowpb/v1"
 	"go.temporal.io/server/common/callbacks"
-	"go.temporal.io/server/service/history/historybuilder"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -48,6 +49,23 @@ type Workflow struct {
 
 	// Updates indexed by update ID, used to store the update components.
 	Updates chasm.Map[string, *WorkflowUpdate]
+
+	// Native is set for a workflow created by NewNativeWorkflow, which holds its history events and
+	// workflow task in this tree instead of in mutable state.
+	Native chasm.Field[*chasmworkflowpb.NativeWorkflowState]
+
+	// NativeHistory holds a native workflow's history events, keyed by event ID.
+	NativeHistory chasm.Map[int64, *historypb.HistoryEvent]
+
+	// Activities holds the workflow's activities, keyed by scheduled event ID. Only used when the
+	// workflow's activity commands are handled by NewActivityLibrary; the server runs workflow
+	// activities in mutable state.
+	Activities chasm.Map[int64, *activity.Activity]
+
+	// Timers holds the workflow's running timers, keyed by timer ID. Only used when the workflow's
+	// timer commands are handled by NewTimerLibrary; the server runs workflow timers in mutable
+	// state.
+	Timers chasm.Map[string, *timer.Timer]
 }
 
 func NewWorkflow(
@@ -67,8 +85,11 @@ func NewWorkflow(
 // which is bypassed for workflows). Here mutableStateImpl updates the execution state directly and this method
 // only reflects it, so it is meant for the read path (e.g. task validation), not for driving state transitions.
 func (w *Workflow) LifecycleState(
-	_ chasm.Context,
+	ctx chasm.Context,
 ) chasm.LifecycleState {
+	if state, ok := w.Native.TryGet(ctx); ok {
+		return nativeLifecycleState(state)
+	}
 	return w.MSPointer.LifecycleState()
 }
 
@@ -289,7 +310,7 @@ func addAndApplyHistoryEvent[D EventDefinition](
 	if !ok {
 		return nil, serviceerror.NewInternalf("no event definition registered for Go type %T", (*D)(nil))
 	}
-	event := w.AddHistoryEvent(def.Type(), setAttributes)
+	event := w.eventStore(ctx).AddHistoryEvent(def.Type(), setAttributes)
 	return event, def.Apply(ctx, w, event)
 }
 
@@ -341,7 +362,7 @@ func (w *Workflow) HasIncomingSignalEvent(_ chasm.Context, requestID string) boo
 }
 
 // HasAnyBufferedEvent returns true if the workflow has any buffered event matching the given filter.
-func (w *Workflow) HasAnyBufferedEvent(filter historybuilder.BufferedEventFilter) bool {
+func (w *Workflow) HasAnyBufferedEvent(filter func(*historypb.HistoryEvent) bool) bool {
 	return w.MSPointer.HasAnyBufferedEvent(filter)
 }
 

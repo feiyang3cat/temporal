@@ -4,6 +4,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/server/chasm"
 	"go.temporal.io/server/chasm/lib/activity/gen/activitypb/v1"
+	"go.temporal.io/server/common/resource/serviceclient"
 	"google.golang.org/grpc"
 )
 
@@ -112,6 +113,21 @@ func newLibrary(
 		startToCloseTimeoutTaskHandler:    startToCloseTimeoutTaskHandler,
 		heartbeatTimeoutTaskHandler:       heartbeatTimeoutTaskHandler,
 	}
+}
+
+// NewLibrary creates a Library that sends activity tasks to matchingClient and registers no
+// gRPC service.
+func NewLibrary(matchingClient serviceclient.MatchingClient, config *Config) chasm.Library {
+	return newLibrary(
+		nil,
+		newActivityDispatchTaskHandler(activityDispatchTaskHandlerOptions{MatchingClient: matchingClient}),
+		nil, // The local server does not expose the worker control queue.
+		newScheduleToStartTimeoutTaskHandler(),
+		newScheduleToCloseTimeoutTaskHandler(),
+		newStartToCloseTimeoutTaskHandler(),
+		newHeartbeatTimeoutTaskHandler(),
+		config,
+	)
 }
 
 func (l *library) RegisterServices(server *grpc.Server) {
